@@ -1,7 +1,7 @@
 import datetime
 import torch
 import argparse
-
+import os
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
@@ -26,10 +26,13 @@ class TrainNNPrep():
         self.max_epochs = args.epoch
         self.inner_limit = args.inner_limit
         self.crnn_model_path = args.crnn_model
+        self.prep_model_path = args.prep_model
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
         self.std = args.std
         self.is_random_std = args.random_std
+        self.iter_interval = args.print_iter
+        self.ckpt_base_path = args.ckpt_base_path
         torch.manual_seed(42)
 
         self.train_set = properties.vgg_text_dataset_train
@@ -43,14 +46,18 @@ class TrainNNPrep():
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
 
-        if self.crnn_model_path == '':
+        if self.crnn_model_path is None:
             self.crnn_model = CRNN(self.vocab_size, False).to(self.device)
         else:
             self.crnn_model = torch.load(
-                properties.crnn_model_path).to(self.device)
+                self.crnn_model_path).to(self.device)
         self.crnn_model.register_backward_hook(self.crnn_model.backward_hook)
 
-        self.prep_model = UNet().to(self.device)
+        if self.prep_model_path is None:
+            self.prep_model = UNet().to(self.device)
+        else:
+            self.prep_model = torch.load(
+                self.prep_model_path).to(self.device)
 
         transform = transforms.Compose([
             PadWhite(self.input_size),
@@ -105,10 +112,10 @@ class TrainNNPrep():
             std=self.std, is_stochastic=self.is_random_std)
         writer = SummaryWriter(properties.prep_tensor_board)
 
-        step = 0
         validation_step = 0
         self.crnn_model.zero_grad()
         for epoch in range(self.max_epochs):
+            step = 0
             training_loss = 0
             for images, labels, names in self.loader_train:
                 self.crnn_model.train()
@@ -151,8 +158,8 @@ class TrainNNPrep():
                 self.optimizer_prep.step()
 
                 training_loss += loss.item()
-                if step % 100 == 0:
-                    print("Iteration: %d => %f" % (step, loss.item()))
+                if step % self.iter_interval == 0:
+                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}")
                 step += 1
 
             writer.add_scalar('Training Loss', training_loss /
@@ -211,9 +218,9 @@ class TrainNNPrep():
                                                                                 self.batch_size),
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
             torch.save(self.prep_model,
-                       properties.prep_model_path + "Prep_model_"+str(epoch))
-            torch.save(self.crnn_model, properties.prep_model_path +
-                       "CRNN_model_" + str(epoch))
+                        os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
+            torch.save(self.crnn_model, os.path.join(self.ckpt_base_path,
+                       "CRNN_model_" + str(epoch)))
         writer.flush()
         writer.close()
 
@@ -236,12 +243,18 @@ if __name__ == "__main__":
                         default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
                         default=2, help='number of inner loop iterations in Alogorithm 1')
-    parser.add_argument('--crnn_model', default=properties.crnn_model_path,
-                        help="specify non-default CRNN model location. If given empty, a new CRNN model will be used")
+    parser.add_argument('--crnn_model',
+                        help="specify non-default CRNN model location. By default, a new CRNN model will be used")
+    parser.add_argument('--prep_model',
+                        help="specify non-default Prep model location. By default, a new Prep model will be used")
     parser.add_argument('--ocr', default='Tesseract',
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
+    parser.add_argumentt('--print_iter', type=int,
+                        default=100, help='Interval for printing iterations per Epoch')
+    parser.add_argumentt('--ckpt_base_path', default=properties.prep_model_path,
+                        help='Base path to save model checkpoints. Defaults to properties path')
     args = parser.parse_args()
     print(args)
 

@@ -28,6 +28,7 @@ class TrainCRNN():
         self.std = args.std
         self.is_random_std = args.random_std
         self.dataset_name = args.dataset
+        self.crnn_model_path = args.crnn_model_path
 
         self.decay = 0.8
         self.decay_step = 10
@@ -96,10 +97,11 @@ class TrainCRNN():
     def train(self):
         writer = SummaryWriter(properties.crnn_tensor_board)
 
-        step = 0
+       
         validation_step = 0
         for epoch in range(self.max_epochs):
             self.model.train()
+            step = 0
             training_loss = 0
             for images, labels in self.loader_train:
                 self.model.zero_grad()
@@ -109,7 +111,7 @@ class TrainCRNN():
                 self.optimizer.step()
                 training_loss += loss.item()
                 if step % 100 == 0:
-                    print("Iteration: %d => %f" % (step, loss.item()))
+                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}")
                 step += 1
 
             writer.add_scalar('Training Loss', training_loss /
@@ -133,7 +135,7 @@ class TrainCRNN():
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
 
             self.scheduler.step()
-            torch.save(self.model, properties.crnn_model_path)
+            torch.save(self.model, self.crnn_model_path)
         writer.flush()
         writer.close()
 
@@ -158,6 +160,8 @@ if __name__ == "__main__":
                         help="performs training with given dataset [pos, vgg]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
+    parser.add_argument('--crnn_model_path',
+                        help='CRNN model save path. Default picked from properties', default=properties.crnn_model_path)
 
     args = parser.parse_args()
     print(args)
