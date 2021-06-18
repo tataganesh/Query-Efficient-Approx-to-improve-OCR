@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import random
 import argparse
 
 from torch.nn import CTCLoss
@@ -29,11 +30,14 @@ class TrainCRNN():
         self.is_random_std = args.random_std
         self.dataset_name = args.dataset
         self.crnn_model_path = args.crnn_model_path
+        self.crnn_ckpt_path = args.ckpt_path
+        self.start_epoch = args.start_epoch
 
         self.decay = 0.8
         self.decay_step = 10
         torch.manual_seed(self.random_seed)
         np.random.seed(torch.initial_seed())
+        random.seed(torch.initial_seed())
 
         if self.dataset_name == 'pos':
             self.train_set = properties.pos_text_dataset_train
@@ -49,7 +53,12 @@ class TrainCRNN():
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
 
-        self.model = CRNN(self.vocab_size, False).to(self.device)
+
+        if self.crnn_ckpt_path is None:
+            self.model = CRNN(self.vocab_size, False).to(self.device)
+        else:
+            self.model = torch.load(
+                self.crnn_ckpt_path).to(self.device)
         self.model.register_backward_hook(self.model.backward_hook)
 
         self.ocr = get_ocr_helper(self.ocr)
@@ -65,10 +74,13 @@ class TrainCRNN():
                 AddGaussianNoice(
                     std=self.std, is_stochastic=self.is_random_std)
             ])
+
             dataset = OCRDataset(
                 self.train_set, transform=noisy_transform, ocr_helper=self.ocr)
+            rand_indices = torch.randperm(len(dataset))[:properties.train_subset_size]
+            dataset_subset = torch.utils.data.Subset(dataset, rand_indices)
             self.loader_train = torch.utils.data.DataLoader(
-                dataset, batch_size=self.batch_size, drop_last=True, shuffle=True)
+                dataset_subset, batch_size=self.batch_size, drop_last=True, shuffle=True)
 
             validation_set = OCRDataset(
                 self.validation_set, transform=transform, ocr_helper=self.ocr)
@@ -99,7 +111,7 @@ class TrainCRNN():
 
        
         validation_step = 0
-        for epoch in range(self.max_epochs):
+        for epoch in range(self.start_epoch + 1, self.max_epochs):
             self.model.train()
             step = 0
             training_loss = 0
@@ -135,7 +147,7 @@ class TrainCRNN():
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
 
             self.scheduler.step()
-            torch.save(self.model, self.crnn_model_path)
+            torch.save(self.model, self.crnn_model_path + "_" + str(epoch))
         writer.flush()
         writer.close()
 
@@ -162,7 +174,10 @@ if __name__ == "__main__":
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
     parser.add_argument('--crnn_model_path',
                         help='CRNN model save path. Default picked from properties', default=properties.crnn_model_path)
-
+    parser.add_argument('--ckpt_path',
+                        help='Path to CRNN checkpoint')
+    parser.add_argument('--start_epoch', type=int, default=-1,
+                        help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     args = parser.parse_args()
     print(args)
     trainer = TrainCRNN(args)
