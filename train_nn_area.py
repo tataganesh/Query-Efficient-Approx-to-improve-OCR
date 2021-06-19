@@ -68,13 +68,20 @@ class TrainNNPrep():
         self.validation_set = ImgDataset(
             self.validation_set, transform=transform, include_name=True)
 
-        self.loader_train = torch.utils.data.DataLoader(
-            self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
-        self.loader_validation = torch.utils.data.DataLoader(
-            self.validation_set, batch_size=self.batch_size, drop_last=True)
 
-        self.train_set_size = len(self.dataset)
-        self.val_set_size = len(self.validation_set)
+        rand_indices = torch.randperm(len(self.dataset))[:properties.train_subset_size]
+        dataset_subset = torch.utils.data.Subset(self.dataset, rand_indices)
+        self.loader_train = torch.utils.data.DataLoader(
+            dataset_subset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+
+        
+        rand_indices = torch.randperm(len(self.validation_set))[:properties.val_subset_size]
+        validation_set_subset = torch.utils.data.Subset(self.validation_set, rand_indices)
+        self.loader_validation = torch.utils.data.DataLoader(
+            validation_set_subset, batch_size=self.batch_size, drop_last=True)
+
+        self.train_set_size = len(self.loader_train.dataset)
+        self.val_set_size = len(self.loader_validation.dataset)
 
         self.primary_loss_fn = CTCLoss().to(self.device)
         self.secondary_loss_fn = MSELoss().to(self.device)
