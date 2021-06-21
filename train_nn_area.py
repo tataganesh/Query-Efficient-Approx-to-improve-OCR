@@ -37,6 +37,7 @@ class TrainNNPrep():
         self.ckpt_base_path = args.ckpt_base_path
         self.tensorboard_log_path = args.tb_log_path
         torch.manual_seed(42)
+        self.start_epoch = args.start_epoch
         self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
         self.train_batch_size = self.batch_size
         if args.minibatch_subset_prop is not None:
@@ -130,7 +131,7 @@ class TrainNNPrep():
         print(f"Train batch size is {self.train_batch_size}")
         validation_step = 0
         self.crnn_model.zero_grad()
-        for epoch in range(self.max_epochs):
+        for epoch in range(self.start_epoch, self.max_epochs):
             step = 0
             training_loss = 0
             for images, labels, names in self.loader_train:
@@ -279,6 +280,8 @@ if __name__ == "__main__":
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
+    parser.add_argument('--start_epoch', type=int, default=0,
+                        help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     args = parser.parse_args()
     print(args)
 
