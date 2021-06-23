@@ -185,4 +185,4 @@ def random_subset(images, labels, num_samples):
     """    
     num_images = images.shape[0]
     rand_indices = torch.randperm(num_images)[:num_samples]
-    return images[rand_indices], labels[rand_indices]
+    return images[rand_indices], [labels[i] for i in rand_indices]
