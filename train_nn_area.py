@@ -118,9 +118,24 @@ class TrainNNPrep():
 
     def add_noise(self, imgs, noiser):
         noisy_imgs = []
+        added_noise = []
         for img in imgs:
-            noisy_imgs.append(noiser(img))
-        return torch.stack(noisy_imgs)
+            noise = noiser(img)
+            added_noise.append(noise)
+            noisy_imgs.append(noise)
+        return torch.stack(noisy_imgs), torch.stack(added_noise)
+
+    
+    def Rop(self, y, x, v):
+        """Computes an Rop.
+        
+        Arguments:
+            y (Variable): output of differentiated function
+            x (Variable): differentiated input
+            v (Variable): vector to be multiplied with Jacobian from the right
+        """
+        w = torch.ones_like(y, requires_grad=True)
+        return torch.autograd.grad(torch.autograd.grad(y, x, w), w, v)
 
     def train(self):
         noiser = AddGaussianNoice(
@@ -147,14 +162,27 @@ class TrainNNPrep():
                 img_preds = img_preds.detach().cpu()
                 temp_loss = 0
 
+                # for i in range(self.inner_limit):
+                #     self.prep_model.zero_grad()
+                #     noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                #     noisy_labels = self.ocr.get_labels(noisy_imgs)
+                #     scores, y, pred_size, y_size = self._call_model(
+                #         noisy_imgs, noisy_labels)
+                #     loss = self.primary_loss_fn(
+                #         scores, y, pred_size, y_size)
+                #     temp_loss += loss.item()
+                #     loss.backward()
+                ocr_labels = self.ocr.get_labels(img_preds) # Black-box output b(x)
                 for i in range(self.inner_limit):
                     self.prep_model.zero_grad()
-                    noisy_imgs = self.add_noise(img_preds, noiser)
-                    noisy_labels = self.ocr.get_labels(noisy_imgs)
+                    noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                    # noisy_labels = self.ocr.get_labels(noisy_imgs)
                     scores, y, pred_size, y_size = self._call_model(
-                        noisy_imgs, noisy_labels)
+                        noisy_imgs, ocr_labels)
+                    jvp = self.Rop(scores, noisy_imgs, added_noise)
+                    shifted_scores = scores + jvp
                     loss = self.primary_loss_fn(
-                        scores, y, pred_size, y_size)
+                        shifted_scores, y, pred_size, y_size)
                     temp_loss += loss.item()
                     loss.backward()
 
