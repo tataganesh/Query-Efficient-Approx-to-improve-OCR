@@ -182,7 +182,7 @@ class TrainNNPrep():
                         scores, y, pred_size, y_size = self._call_model(
                             noisy_imgs, ocr_labels)
                         jvp = self.Rop(scores, noisy_imgs, added_noise)
-                        shifted_scores = scores - jvp[0]
+                        shifted_scores = scores + jvp[0]
                         noisy_imgs.requires_grad = False
                         loss = self.primary_loss_fn(
                             shifted_scores, y, pred_size, y_size)

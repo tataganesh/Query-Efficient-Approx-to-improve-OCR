@@ -35,6 +35,6 @@ class AddGaussianNoice(object):
         else:
             r_std = self.std/100
         noise = torch.normal(self.mean, r_std, image.shape)
-        out_img = image + noise
+        out_img = image - noise
         out_img.data.clamp_(0, 1)
         return out_img, noise
