@@ -31,6 +31,7 @@ class TrainCRNN():
         self.dataset_name = args.dataset
         self.crnn_model_path = args.crnn_model_path
         self.crnn_ckpt_path = args.ckpt_path
+        self.tb_log_path = args.tb_logs_path
         self.start_epoch = args.start_epoch
 
         self.decay = 0.8
@@ -110,7 +111,7 @@ class TrainCRNN():
         return scores, y_var, out_size, y_size
 
     def train(self):
-        writer = SummaryWriter(properties.crnn_tensor_board)
+        writer = SummaryWriter(self.tb_log_path)
 
        
         validation_step = 0
@@ -177,6 +178,8 @@ if __name__ == "__main__":
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
     parser.add_argument('--crnn_model_path',
                         help='CRNN model save path. Default picked from properties', default=properties.crnn_model_path)
+    parser.add_argument('--tb_logs_path',
+                        help='Tensorboard logs save path. Default picked from properties', default=properties.crnn_tensor_board)
     parser.add_argument('--ckpt_path',
                         help='Path to CRNN checkpoint')
     parser.add_argument('--start_epoch', type=int, default=-1,
