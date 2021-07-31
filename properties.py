@@ -4,9 +4,9 @@ pos_text_dataset_test = "./data/textarea_dataset_test"
 pos_text_dataset_dev = "./data/textarea_dataset_dev"
 
 # VGG
-vgg_text_dataset_train = "./data/vgg_train"
-vgg_text_dataset_test = "./data/vgg_test"
-vgg_text_dataset_dev = "./data/vgg_dev"
+vgg_text_dataset_train = "data/vgg_train"
+vgg_text_dataset_test = "data/vgg_test"
+vgg_text_dataset_dev = "data/vgg_dev"
 
 # POS Patches
 patch_dataset_train = "./data/patch_dataset_train"

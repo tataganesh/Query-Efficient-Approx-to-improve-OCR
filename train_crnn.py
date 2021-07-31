@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import random
 import argparse
+import os
 
 from torch.nn import CTCLoss
 import torch.optim as optim
@@ -44,8 +45,8 @@ class TrainCRNN():
             self.train_set = properties.pos_text_dataset_train
             self.validation_set = properties.pos_text_dataset_dev
         elif self.dataset_name == 'vgg':
-            self.train_set = properties.vgg_text_dataset_train
-            self.validation_set = properties.vgg_text_dataset_dev
+            self.train_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
+            self.validation_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
 
         self.input_size = properties.input_size
 
@@ -180,6 +181,11 @@ if __name__ == "__main__":
                         help='CRNN model save path. Default picked from properties', default=properties.crnn_model_path)
     parser.add_argument('--tb_logs_path',
                         help='Tensorboard logs save path. Default picked from properties', default=properties.crnn_tensor_board)
+    parser.add_argument('--tb_logs_path',
+                        help='Tensorboard logs save path. Default picked from properties', default=properties.crnn_tensor_board)
+
+    parser.add_argument('--data_base_path',
+                        help='Tensorboard logs save path. Default picked from properties', default=".")
     parser.add_argument('--ckpt_path',
                         help='Path to CRNN checkpoint')
     parser.add_argument('--start_epoch', type=int, default=-1,
