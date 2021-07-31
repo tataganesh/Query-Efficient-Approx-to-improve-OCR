@@ -181,8 +181,6 @@ if __name__ == "__main__":
                         help='CRNN model save path. Default picked from properties', default=properties.crnn_model_path)
     parser.add_argument('--tb_logs_path',
                         help='Tensorboard logs save path. Default picked from properties', default=properties.crnn_tensor_board)
-    parser.add_argument('--tb_logs_path',
-                        help='Tensorboard logs save path. Default picked from properties', default=properties.crnn_tensor_board)
 
     parser.add_argument('--data_base_path',
                         help='Tensorboard logs save path. Default picked from properties', default=".")
