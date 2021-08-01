@@ -13,9 +13,11 @@ from models.model_unet import UNet
 from datasets.img_dataset import ImgDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string
 from utils import get_ocr_helper, compare_labels, save_img
+from utils import random_subset
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
 
+minibatch_subset_methods = {"random": random_subset}
 
 class TrainNNPrep():
 
@@ -33,9 +35,16 @@ class TrainNNPrep():
         self.is_random_std = args.random_std
         self.iter_interval = args.print_iter
         self.ckpt_base_path = args.ckpt_base_path
+        self.tensorboard_log_path = args.tb_log_path
         torch.manual_seed(42)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
+        self.start_epoch = args.start_epoch
+        self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
+        self.train_batch_size = self.batch_size
+        if args.minibatch_subset_prop and self.minibatch_sample:
+            self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
+        
         self.input_size = properties.input_size
 
         self.ocr = get_ocr_helper(self.ocr_name)
@@ -116,14 +125,18 @@ class TrainNNPrep():
     def train(self):
         noiser = AddGaussianNoice(
             std=self.std, is_stochastic=self.is_random_std)
-        writer = SummaryWriter(properties.prep_tensor_board)
-
+        writer = SummaryWriter(self.tensorboard_log_path)
+        
+        print(f"Batch size is {self.batch_size}")
+        print(f"Train batch size is {self.train_batch_size}")
         validation_step = 0
         self.crnn_model.zero_grad()
-        for epoch in range(self.max_epochs):
+        for epoch in range(self.start_epoch, self.max_epochs):
             step = 0
             training_loss = 0
             for images, labels, names in self.loader_train:
+                if self.minibatch_sample is not None:
+                    images, labels = self.minibatch_sample(images, labels, self.train_batch_size)
                 self.crnn_model.train()
                 self.prep_model.eval()
                 self.prep_model.zero_grad()
@@ -169,7 +182,7 @@ class TrainNNPrep():
                 step += 1
 
             writer.add_scalar('Training Loss', training_loss /
-                              (self.train_set_size//self.batch_size), epoch + 1)
+                              (self.train_set_size//self.train_batch_size), epoch + 1) # Change to batch size if not randomly sampling from mini-batches
 
             self.prep_model.eval()
             self.crnn_model.eval()
@@ -221,7 +234,7 @@ class TrainNNPrep():
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1),
                                                                                self.max_epochs, training_loss /
                                                                                (self.train_set_size //
-                                                                                self.batch_size),
+                                                                                self.train_batch_size),
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
             torch.save(self.prep_model,
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
@@ -263,6 +276,14 @@ if __name__ == "__main__":
                         default=100, help='Interval for printing iterations per Epoch')
     parser.add_argument('--ckpt_base_path', default=properties.prep_model_path,
                         help='Base path to save model checkpoints. Defaults to properties path')
+    parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
+                        help='Base path to save Tensorboard summaries.') 
+    parser.add_argument('--minibatch_subset',  choices=['random'], 
+                        help='Specify method to pick subset from minibatch.')
+    parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
+                        help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
+    parser.add_argument('--start_epoch', type=int, default=0,
+                        help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     args = parser.parse_args()
     print(args)
 

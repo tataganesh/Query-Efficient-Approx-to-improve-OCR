@@ -170,3 +170,19 @@ def get_ocr_helper(ocr, is_eval=False):
         return eocr_helper.EocrHelper(is_eval=is_eval)
     else:
         return None
+
+
+def random_subset(images, labels, num_samples):
+    """Get 
+
+    Args:
+        images (torch.tensor): Input images
+        labels (torch.tensor): Input labels
+        subset (int): Number of random samples.
+
+    Returns:
+        tuple: Return subset of images and labels. Chosen randomly. 
+    """    
+    num_images = images.shape[0]
+    rand_indices = torch.randperm(num_images)[:num_samples]
+    return images[rand_indices], [labels[i] for i in rand_indices]
