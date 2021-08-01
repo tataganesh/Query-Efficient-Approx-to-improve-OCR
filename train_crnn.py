@@ -183,7 +183,7 @@ if __name__ == "__main__":
                         help='Tensorboard logs save path. Default picked from properties', default=properties.crnn_tensor_board)
 
     parser.add_argument('--data_base_path',
-                        help='Tensorboard logs save path. Default picked from properties', default=".")
+                        help='Base path training, validation and test data', default=".")
     parser.add_argument('--ckpt_path',
                         help='Path to CRNN checkpoint')
     parser.add_argument('--start_epoch', type=int, default=-1,
