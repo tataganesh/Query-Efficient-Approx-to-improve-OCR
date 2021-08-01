@@ -259,9 +259,9 @@ if __name__ == "__main__":
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
-    parser.add_argumentt('--print_iter', type=int,
+    parser.add_argument('--print_iter', type=int,
                         default=100, help='Interval for printing iterations per Epoch')
-    parser.add_argumentt('--ckpt_base_path', default=properties.prep_model_path,
+    parser.add_argument('--ckpt_base_path', default=properties.prep_model_path,
                         help='Base path to save model checkpoints. Defaults to properties path')
     args = parser.parse_args()
     print(args)
