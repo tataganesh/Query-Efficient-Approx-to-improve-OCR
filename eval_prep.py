@@ -14,7 +14,7 @@ import properties as properties
 class EvalPrep():
 
     def __init__(self, args):
-        self.batch_size = 1
+        self.batch_size = args.batch_size
         self.show_txt = args.show_txt
         self.show_img = args.show_img
         self.prep_model_name = args.prep_model_name
@@ -177,6 +177,8 @@ if __name__ == "__main__":
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument("--prep_model_name",
                         default='prep_tesseract_pos', help='Prep model name')
+    parser.add_argument("--batch_size", default=64, type=int,  help='Inference batch size')
+    
     args = parser.parse_args()
     print(args)
     evaluator = EvalPrep(args)
