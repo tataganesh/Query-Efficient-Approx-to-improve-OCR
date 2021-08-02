@@ -29,7 +29,7 @@ BATCH_SIZE=64
 EPOCH=30
 CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_8/crnn_warmup/crnn_model_29"
 TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
-CKPT_BASE_PATH="/content/drive/MyDrive/thesis/black_box_approx_ckpts/experiment_$EXP_NUM/ckpts"
+CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
 mkdir -p $TB_LOGS_PATH $CKPT_PATH
 # tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
 echo "Running training script"
