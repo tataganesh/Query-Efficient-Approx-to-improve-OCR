@@ -35,7 +35,7 @@ class TrainCRNN():
         self.crnn_ckpt_path = args.ckpt_path
         self.tb_log_path = args.tb_logs_path
         self.start_epoch = args.start_epoch
-
+        self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
         self.train_batch_size = self.batch_size
         if args.minibatch_subset_prop and self.minibatch_sample:
             self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)

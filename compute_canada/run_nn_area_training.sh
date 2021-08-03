@@ -30,7 +30,7 @@ EPOCH=30
 CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_8/crnn_warmup/crnn_model_29"
 TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
 CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
-mkdir -p $TB_LOGS_PATH $CKPT_PATH
+mkdir -p $TB_LOGS_PATH $CKPT_BASE_PATH
 # tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
 echo "Running training script"
 python -u train_nn_area.py --batch_size $BATCH_SIZE --epoch $EPOCH  --ckpt_base_path $CKPT_BASE_PATH --crnn_model  $CRNN_MODEL_PATH --tb_log_path $TB_LOGS_PATH --data_base_path $SLURM_TMPDIR 

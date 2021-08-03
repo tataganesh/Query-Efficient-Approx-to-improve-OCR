@@ -20,8 +20,8 @@ prep_model_path = "./outputs/prep_trained_model/"
 prep_tensor_board = "./outputs/prep_runs/"
 img_out_path = "./outputs/img_out/"
 param_path = "./outputs/params.txt"
-train_subset_size = 10000
-val_subset_size = 1000
+train_subset_size = 50000
+val_subset_size = 10000
 
 input_size = (32, 128)
 num_workers = 4
