@@ -9,9 +9,9 @@ vgg_text_dataset_test = "data/vgg_test"
 vgg_text_dataset_dev = "data/vgg_dev"
 
 # POS Patches
-patch_dataset_train = "./data/patch_dataset_train"
-patch_dataset_test = "./data/patch_dataset_test"
-patch_dataset_dev = "./data/patch_dataset_dev"
+patch_dataset_train = "data/patch_dataset_train"
+patch_dataset_test = "data/patch_dataset_test"
+patch_dataset_dev = "data/patch_dataset_dev"
 
 
 crnn_model_path = "./outputs/crnn_trained_model/model"

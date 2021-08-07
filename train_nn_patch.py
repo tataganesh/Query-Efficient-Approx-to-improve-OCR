@@ -1,6 +1,7 @@
 import datetime
 import torch
 import argparse
+import os
 
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
@@ -26,6 +27,10 @@ class TrainNNPrep():
         self.max_epochs = args.epoch
         self.inner_limit = args.inner_limit
         self.crnn_model_path = args.crnn_model
+        self.prep_model_path = args.prep_model
+        self.ckpt_base_path = args.ckpt_base_path
+        self.tensorboard_log_path = args.tb_log_path
+
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
         self.std = args.std
@@ -49,7 +54,12 @@ class TrainNNPrep():
             self.crnn_model = torch.load(
                 properties.crnn_model_path).to(self.device)
         self.crnn_model.register_backward_hook(self.crnn_model.backward_hook)
-        self.prep_model = UNet().to(self.device)
+
+        if self.prep_model_path is None:
+            self.prep_model = UNet().to(self.device)
+        else:
+            self.prep_model = torch.load(
+                self.prep_model_path).to(self.device)
 
         self.dataset = PatchDataset(
             properties.patch_dataset_train, pad=True, include_name=True)
@@ -95,8 +105,8 @@ class TrainNNPrep():
     def train(self):
         noiser = AddGaussianNoice(
             std=self.std, is_stochastic=self.is_random_std)
-        writer = SummaryWriter(properties.prep_tensor_board)
-
+        writer = SummaryWriter(self.tensorboard_log_path)
+        
         step = 0
         validation_step = 0
         batch_step = 0
@@ -214,9 +224,9 @@ class TrainNNPrep():
                                                                                training_loss / self.train_set_size,
                                                                                validation_loss/self.val_set_size))
             torch.save(self.prep_model,
-                       properties.prep_model_path + "Prep_model_"+str(epoch))
-            torch.save(self.crnn_model, properties.prep_model_path +
-                       "CRNN_model_" + str(epoch))
+                        os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
+            torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path
+                       "CRNN_model_" + str(epoch)))
         writer.flush()
         writer.close()
 
@@ -239,6 +249,12 @@ if __name__ == "__main__":
                         default=5, help='number of inner loop iterations')
     parser.add_argument('--crnn_model', default=properties.crnn_model_path,
                         help="specify non-default CRNN model location. If given empty, a new CRNN model will be used")
+    parser.add_argument('--prep_model',
+                        help="specify non-default Prep model location. By default, a new Prep model will be used")
+    parser.add_argument('--ckpt_base_path', default=properties.prep_model_path,
+                        help='Base path to save model checkpoints. Defaults to properties path')
+    parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
+                        help='Base path to save Tensorboard summaries.') 
     parser.add_argument('--ocr', default='Tesseract',
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
