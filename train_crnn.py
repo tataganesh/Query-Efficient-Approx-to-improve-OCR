@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import random
 import argparse
+import os
 
 from torch.nn import CTCLoss
 import torch.optim as optim
@@ -13,10 +14,11 @@ import torchvision.transforms as transforms
 from models.model_crnn import CRNN
 from datasets.ocr_dataset import OCRDataset
 from datasets.img_dataset import ImgDataset
-from utils import get_char_maps, get_ocr_helper
+from utils import get_char_maps, get_ocr_helper, random_subset
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
 
+minibatch_subset_methods = {"random": random_subset}
 
 class TrainCRNN():
 
@@ -31,7 +33,12 @@ class TrainCRNN():
         self.dataset_name = args.dataset
         self.crnn_model_path = args.crnn_model_path
         self.crnn_ckpt_path = args.ckpt_path
+        self.tb_log_path = args.tb_logs_path
         self.start_epoch = args.start_epoch
+        self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
+        self.train_batch_size = self.batch_size
+        if args.minibatch_subset_prop and self.minibatch_sample:
+            self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
 
         self.decay = 0.8
         self.decay_step = 10
@@ -43,8 +50,8 @@ class TrainCRNN():
             self.train_set = properties.pos_text_dataset_train
             self.validation_set = properties.pos_text_dataset_dev
         elif self.dataset_name == 'vgg':
-            self.train_set = properties.vgg_text_dataset_train
-            self.validation_set = properties.vgg_text_dataset_dev
+            self.train_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
+            self.validation_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
 
         self.input_size = properties.input_size
 
@@ -110,9 +117,10 @@ class TrainCRNN():
         return scores, y_var, out_size, y_size
 
     def train(self):
-        writer = SummaryWriter(properties.crnn_tensor_board)
+        writer = SummaryWriter(self.tb_log_path)
 
-       
+        print(f"Batch size is {self.batch_size}")
+        print(f"Train batch size is {self.train_batch_size}")
         validation_step = 0
         for epoch in range(self.start_epoch + 1, self.max_epochs):
             self.model.train()
@@ -120,6 +128,8 @@ class TrainCRNN():
             training_loss = 0
             for images, labels in self.loader_train:
                 self.model.zero_grad()
+                if self.minibatch_sample is not None:
+                    images, labels = self.minibatch_sample(images, labels, self.train_batch_size)
                 scores, y, pred_size, y_size = self._call_model(images, labels)
                 loss = self.loss_function(scores, y, pred_size, y_size)
                 loss.backward()
@@ -130,7 +140,7 @@ class TrainCRNN():
                 step += 1
 
             writer.add_scalar('Training Loss', training_loss /
-                              (self.train_set_size//self.batch_size), epoch + 1)
+                              (self.train_set_size//self.train_batch_size), epoch + 1)
 
             self.model.eval()
             validation_loss = 0
@@ -146,7 +156,7 @@ class TrainCRNN():
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1),
                                                                                self.max_epochs, training_loss /
                                                                                (self.train_set_size //
-                                                                                self.batch_size),
+                                                                                self.train_batch_size),
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
 
             self.scheduler.step()
@@ -177,10 +187,19 @@ if __name__ == "__main__":
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
     parser.add_argument('--crnn_model_path',
                         help='CRNN model save path. Default picked from properties', default=properties.crnn_model_path)
+    parser.add_argument('--tb_logs_path',
+                        help='Tensorboard logs save path. Default picked from properties', default=properties.crnn_tensor_board)
+
+    parser.add_argument('--data_base_path',
+                        help='Base path training, validation and test data', default=".")
     parser.add_argument('--ckpt_path',
                         help='Path to CRNN checkpoint')
     parser.add_argument('--start_epoch', type=int, default=-1,
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
+    parser.add_argument('--minibatch_subset',  choices=['random'], 
+                        help='Specify method to pick subset from minibatch.')
+    parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
+                        help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
     args = parser.parse_args()
     print(args)
     trainer = TrainCRNN(args)

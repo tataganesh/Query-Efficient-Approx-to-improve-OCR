@@ -37,14 +37,14 @@ class TrainNNPrep():
         self.ckpt_base_path = args.ckpt_base_path
         self.tensorboard_log_path = args.tb_log_path
         torch.manual_seed(42)
+        self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
+        self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
         self.start_epoch = args.start_epoch
         self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
         self.train_batch_size = self.batch_size
         if args.minibatch_subset_prop and self.minibatch_sample:
             self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
         
-        self.train_set = properties.vgg_text_dataset_train
-        self.validation_set = properties.vgg_text_dataset_dev
         self.input_size = properties.input_size
 
         self.ocr = get_ocr_helper(self.ocr_name)
@@ -266,6 +266,8 @@ if __name__ == "__main__":
                         help="specify non-default CRNN model location. By default, a new CRNN model will be used")
     parser.add_argument('--prep_model',
                         help="specify non-default Prep model location. By default, a new Prep model will be used")
+    parser.add_argument('--data_base_path',
+                        help='Base path training, validation and test data', default=".")
     parser.add_argument('--ocr', default='Tesseract',
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
