@@ -6,19 +6,19 @@ import torchvision.transforms as transforms
 
 from datasets.patch_dataset import PatchDataset
 from datasets.img_dataset import ImgDataset
-from utils import show_img, compare_labels, get_text_stack, get_ocr_helper
+from utils import show_img, compare_labels, get_text_stack, get_ocr_helper, get_char_maps, pred_to_string
 from transform_helper import PadWhite
 import properties as properties
 
 
-class EvalPrep():
+class EvalCRNN():
 
     def __init__(self, args):
         self.batch_size = args.batch_size
         self.show_txt = args.show_txt
         self.show_img = args.show_img
-        self.prep_model_name = args.prep_model_name
-        self.prep_model_path = args.prep_path
+        self.crnn_model_name = args.crnn_model_name
+        self.crnn_model_path = args.crnn_path
         self.ocr_name = args.ocr
         self.dataset_name = args.dataset
 
@@ -31,10 +31,12 @@ class EvalPrep():
 
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
-        self.prep_model = torch.load(os.path.join(
-            self.prep_model_path, self.prep_model_name)).to(self.device)
+        self.crnn_model = torch.load(os.path.join(
+            self.crnn_model_path, self.crnn_model_name)).to(self.device)
 
         self.ocr = get_ocr_helper(self.ocr_name, is_eval=True)
+        self.char_to_index, self.index_to_char, self.vocab_size = get_char_maps(
+            properties.char_set)
 
         if self.dataset_name == 'pos':
             self.dataset = PatchDataset(self.test_set, pad=True)
@@ -47,6 +49,17 @@ class EvalPrep():
                 self.test_set, transform=transform, include_name=True)
             self.loader_eval = torch.utils.data.DataLoader(
                 self.dataset, batch_size=self.batch_size, num_workers=properties.num_workers)
+
+    def _call_model(self, images, labels):
+        X_var = images.to(self.device)
+        scores = self.crnn_model(X_var)
+        out_size = torch.tensor(
+            [scores.shape[0]] * images.shape[0], dtype=torch.int)
+        y_size = torch.tensor([len(l) for l in labels], dtype=torch.int)
+        conc_label = ''.join(labels)
+        y = [self.char_to_index[c] for c in conc_label]
+        y_var = torch.tensor(y, dtype=torch.int)
+        return scores, y_var, out_size, y_size
 
     def _print_labels(self, labels, pred, ori):
         print()
@@ -64,43 +77,44 @@ class EvalPrep():
 
     def eval_area(self):
         print("Eval with ", self.ocr_name)
-        self.prep_model.eval()
-        pred_correct_count = 0
+        self.crnn_model.eval()
+        crnn_correct_count = 0
         ori_correct_count = 0
         ori_cer = 0
-        pred_cer = 0
+        crnn_cer = 0
         counter = 0
 
-        for images, labels, names in self.loader_eval:
+        for images, labels, names in enumerate(self.loader_eval):
             X_var = images.to(self.device)
-            img_preds = self.prep_model(X_var)
-
-            ocr_lbl_pred = self.ocr.get_labels(img_preds.cpu())
+            scores, y, pred_size, y_size = self._call_model(
+                        X_var, labels)            
+            # ocr_lbl_pred = self.ocr.get_labels(X_var.cpu())
+            ocr_lbl_crnn = pred_to_string(scores.cpu(), labels, self.index_to_char)
             ocr_lbl_ori = self.ocr.get_labels(images.cpu())
 
             if self.show_txt:
-                self._print_labels(labels, ocr_lbl_pred, ocr_lbl_ori)
+                self._print_labels(labels, ocr_lbl_crnn, ocr_lbl_ori)
 
-            prd_crt_count, prd_cer = compare_labels(
-                ocr_lbl_pred, labels)
+            crnn_crt_count, crn_cer = compare_labels(
+                ocr_lbl_crnn, labels)
             ori_crt_count, o_cer = compare_labels(ocr_lbl_ori, labels)
-            pred_correct_count += prd_crt_count
+            crnn_correct_count += crnn_crt_count
             ori_correct_count += ori_crt_count
             ori_cer += o_cer
-            pred_cer += prd_cer
+            crnn_cer += crn_cer
 
-            if self.show_img:
-                show_img(img_preds.detach().cpu(), "Processed images")
+            # if self.show_img:
+            #     show_img(img_preds.detach().cpu(), "Processed images")
             counter += 1
         print()
-        print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
-            pred_correct_count, len(self.dataset), pred_correct_count/len(self.dataset)))
-        print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
+        print('Correct count from CRNN: {:d}/{:d} ({:.5f})'.format(
+            crnn_correct_count, len(self.dataset), crnn_correct_count/len(self.dataset)))
+        print('Correct count from Tesseract: {:d}/{:d} ({:.5f})'.format(
             ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
-        print('Average CER from original images: {:.5f}'.format(
+        print('Average CER using Tesseract: {:.5f}'.format(
             ori_cer/len(self.dataset)))
-        print('Average CER from predicted images: {:.5f}'.format(
-            pred_cer/len(self.dataset)))
+        print('Average CER using CRNN: {:.5f}'.format(
+            crnn_cer/len(self.dataset)))
 
     def eval_patch(self):
         print("Eval with ", self.ocr_name)
@@ -169,13 +183,13 @@ if __name__ == "__main__":
                         help='prints predictions and groud truth')
     parser.add_argument('--show_img', action='store_true',
                         help='shows each batch of images')
-    parser.add_argument('--prep_path', default=properties.prep_model_path,
+    parser.add_argument('--crnn_path', default=properties.crnn_model_path,
                         help="specify non-default prep model location")
     parser.add_argument('--dataset', default='pos',
                         help="performs training with given dataset [pos, vgg]")
     parser.add_argument('--ocr', default="Tesseract",
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
-    parser.add_argument("--prep_model_name",
+    parser.add_argument("--crnn_model_name",
                         default='prep_tesseract_pos', help='Prep model name')
     parser.add_argument("--batch_size", default=64, type=int,  help='Inference batch size')
     parser.add_argument('--data_base_path',
@@ -183,5 +197,5 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     print(args)
-    evaluator = EvalPrep(args)
+    evaluator = EvalCRNN(args)
     evaluator.eval()
