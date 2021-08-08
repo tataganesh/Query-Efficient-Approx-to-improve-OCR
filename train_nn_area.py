@@ -36,6 +36,7 @@ class TrainNNPrep():
         self.iter_interval = args.print_iter
         self.ckpt_base_path = args.ckpt_base_path
         self.tensorboard_log_path = args.tb_log_path
+        self.jvp_jitter = args.jvp_jitter
         torch.manual_seed(42)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
@@ -161,33 +162,36 @@ class TrainNNPrep():
                 img_preds = self.prep_model(X_var)
                 img_preds = img_preds.detach().cpu()
                 temp_loss = 0
-
-                # for i in range(self.inner_limit):
-                #     self.prep_model.zero_grad()
-                #     noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
-                #     noisy_labels = self.ocr.get_labels(noisy_imgs)
-                #     scores, y, pred_size, y_size = self._call_model(
-                #         noisy_imgs, noisy_labels)
-                #     loss = self.primary_loss_fn(
-                #         scores, y, pred_size, y_size)
-                #     temp_loss += loss.item()
-                #     loss.backward()
-                with torch.backends.cudnn.flags(enabled=False): 
-                    ocr_labels = self.ocr.get_labels(img_preds) # Black-box output b(x)
+                
+                if self.jvp_jitter:
+                    with torch.backends.cudnn.flags(enabled=False): 
+                        ocr_labels = self.ocr.get_labels(img_preds) # Black-box output b(x)
+                        for i in range(self.inner_limit):
+                            self.prep_model.zero_grad()
+                            noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                            noisy_imgs.requires_grad = True
+                            # noisy_labels = self.ocr.get_labels(noisy_imgs)
+                            scores, y, pred_size, y_size = self._call_model(
+                                noisy_imgs, ocr_labels)
+                            jvp = self.Rop(scores, noisy_imgs, added_noise)
+                            shifted_scores = scores + jvp[0]
+                            noisy_imgs.requires_grad = False
+                            loss = self.primary_loss_fn(
+                                shifted_scores, y, pred_size, y_size)
+                            temp_loss += loss.item()
+                            loss.backward()
+                else:
                     for i in range(self.inner_limit):
                         self.prep_model.zero_grad()
                         noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
-                        noisy_imgs.requires_grad = True
-                        # noisy_labels = self.ocr.get_labels(noisy_imgs)
+                        noisy_labels = self.ocr.get_labels(noisy_imgs)
                         scores, y, pred_size, y_size = self._call_model(
-                            noisy_imgs, ocr_labels)
-                        jvp = self.Rop(scores, noisy_imgs, added_noise)
-                        shifted_scores = scores + jvp[0]
-                        noisy_imgs.requires_grad = False
+                            noisy_imgs, noisy_labels)
                         loss = self.primary_loss_fn(
-                            shifted_scores, y, pred_size, y_size)
+                            scores, y, pred_size, y_size)
                         temp_loss += loss.item()
                         loss.backward()
+
 
                 CRNN_training_loss = temp_loss/self.inner_limit
                 self.optimizer_crnn.step()
@@ -315,6 +319,8 @@ if __name__ == "__main__":
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
     parser.add_argument('--start_epoch', type=int, default=0,
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
+    parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
+                            The function space around the black-box will not be explord.", default=False)
     args = parser.parse_args()
     print(args)
 
