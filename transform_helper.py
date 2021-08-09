@@ -29,13 +29,13 @@ class AddGaussianNoice(object):
         self.mean = mean
         self.is_stochastic = is_stochastic
 
-    def __call__(self, image):
+    def __call__(self, image, noise_coef = 1):
         if self.is_stochastic:
             r_std = torch.randint(low=0, high=self.std+1, size=(1,)).item()/100.0
         else:
             r_std = self.std/100.0
         r_std += 0.0000000001 # Handling error in CC when r_std is 0
         noise = torch.normal(self.mean, r_std, image.shape)
-        out_img = image - noise
+        out_img = image - noise_coef * noise
         out_img.data.clamp_(0, 1)
         return out_img, noise
