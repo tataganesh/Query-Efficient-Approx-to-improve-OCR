@@ -24,10 +24,11 @@ class PadWhite(object):
 
 
 class AddGaussianNoice(object):
-    def __init__(self, std=5, mean=0, is_stochastic=False):
+    def __init__(self, std=5, mean=0, is_stochastic=False, return_noise=False):
         self.std = std
         self.mean = mean
         self.is_stochastic = is_stochastic
+        self.return_noise = return_noise
 
     def __call__(self, image, noise_coef = 1):
         if self.is_stochastic:
@@ -38,4 +39,7 @@ class AddGaussianNoice(object):
         noise = torch.normal(self.mean, r_std, image.shape)
         out_img = image - noise_coef * noise
         out_img.data.clamp_(0, 1)
-        return out_img, noise
+        if self.return_noise:
+            return out_img, noise
+        else:
+            return out_img

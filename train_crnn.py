@@ -47,8 +47,8 @@ class TrainCRNN():
         random.seed(torch.initial_seed())
 
         if self.dataset_name == 'pos':
-            self.train_set = properties.pos_text_dataset_train
-            self.validation_set = properties.pos_text_dataset_dev
+            self.train_set =  os.path.join(args.data_base_path, properties.pos_text_dataset_train)
+            self.validation_set = os.path.join(args.data_base_path, properties.pos_text_dataset_dev)
         elif self.dataset_name == 'vgg':
             self.train_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
             self.validation_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
@@ -79,7 +79,7 @@ class TrainCRNN():
                 PadWhite(self.input_size),
                 transforms.ToTensor(),
                 AddGaussianNoice(
-                    std=self.std, is_stochastic=self.is_random_std)
+                    std=self.std, is_stochastic=self.is_random_std, return_noise=False)
             ])
 
             dataset = OCRDataset(

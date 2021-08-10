@@ -1,7 +1,7 @@
 # POS Text areas
-pos_text_dataset_train = "./data/textarea_dataset_train"
-pos_text_dataset_test = "./data/textarea_dataset_test"
-pos_text_dataset_dev = "./data/textarea_dataset_dev"
+pos_text_dataset_train = "data/textarea_dataset_train"
+pos_text_dataset_test = "data/textarea_dataset_test"
+pos_text_dataset_dev = "data/textarea_dataset_dev"
 
 # VGG
 vgg_text_dataset_train = "data/vgg_train"

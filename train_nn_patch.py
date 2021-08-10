@@ -12,12 +12,12 @@ import torchvision.transforms as transforms
 from models.model_crnn import CRNN
 from models.model_unet import UNet
 from datasets.patch_dataset import PatchDataset
-from utils import get_char_maps, set_bn_eval, pred_to_string
+from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset
 from utils import get_text_stack, get_ocr_helper, compare_labels
 from transform_helper import AddGaussianNoice
 import properties as properties
 
-
+minibatch_subset_methods = {"random": random_subset}
 class TrainNNPrep():
 
     def __init__(self, args):
@@ -37,8 +37,14 @@ class TrainNNPrep():
         self.is_random_std = args.random_std
         torch.manual_seed(42)
 
-        self.train_set = properties.pos_text_dataset_train
-        self.validation_set = properties.pos_text_dataset_dev
+        self.train_set = os.path.join(args.data_base_path, properties.pos_text_dataset_train)
+        self.validation_set = os.path.join(args.data_base_path, properties.pos_text_dataset_dev)
+        self.start_epoch = args.start_epoch
+        self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
+        self.train_batch_prop = 1
+        if args.minibatch_subset_prop and self.minibatch_sample:
+            self.train_batch_prop = args.minibatch_subset_prop
+
         self.input_size = properties.input_size
 
         self.ocr = get_ocr_helper(self.ocr_name)
@@ -68,8 +74,9 @@ class TrainNNPrep():
         self.loader_train = torch.utils.data.DataLoader(
             self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=PatchDataset.collate)
 
-        self.train_set_size = len(self.dataset)
+        self.train_set_size = int(len(self.dataset) * self.train_batch_prop)
         self.val_set_size = len(self.validation_set)
+            
 
         self.primary_loss_fn = CTCLoss().to(self.device)
         self.secondary_loss_fn = MSELoss().to(self.device)
@@ -110,7 +117,9 @@ class TrainNNPrep():
         step = 0
         validation_step = 0
         batch_step = 0
-        for epoch in range(0, self.max_epochs):
+        for epoch in range(self.start_epoch, self.max_epochs):
+            total_samples = 0
+            subset_samples = 0
             training_loss = 0
             for images, labels_dicts, names in self.loader_train:
                 self.crnn_model.train()
@@ -129,7 +138,11 @@ class TrainNNPrep():
 
                     text_crops, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
-
+                    total_samples += text_crops.shape[0].item()
+                    if self.minibatch_sample is not None:
+                        num_samples_subset = int(self.text_crops.shape[0]*self.train_batch_prop)
+                        text_crops, labels = self.minibatch_sample(text_crops, labels, num_samples_subset)
+                    subset_samples += text_crops.shape[0].item()
                     temp_loss = 0
                     for i in range(self.inner_limit):
                         self.prep_model.zero_grad()
@@ -176,7 +189,6 @@ class TrainNNPrep():
 
             writer.add_scalar('Training Loss', training_loss /
                               self.train_set_size, epoch + 1)
-
             self.prep_model.eval()
             self.crnn_model.eval()
             pred_correct_count = 0
@@ -223,9 +235,11 @@ class TrainNNPrep():
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1), self.max_epochs,
                                                                                training_loss / self.train_set_size,
                                                                                validation_loss/self.val_set_size))
+            print("Epoch: %d/%d => Total Training Samples: %f | Subset Training Samples: %f | Train size: %f" % ((epoch + 1), self.max_epochs,
+                                                                                    total_samples, subset_samples, self.train_set_size))
             torch.save(self.prep_model,
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
-            torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path
+            torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
         writer.flush()
         writer.close()
@@ -259,6 +273,14 @@ if __name__ == "__main__":
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
+    parser.add_argument('--minibatch_subset',  choices=['random'], 
+                        help='Specify method to pick subset from minibatch.')
+    parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
+                        help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
+    parser.add_argument('--start_epoch', type=int, default=0,
+                        help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
+    parser.add_argument('--data_base_path',
+                        help='Base path training, validation and test data', default=".")
     args = parser.parse_args()
     print(args)
 
