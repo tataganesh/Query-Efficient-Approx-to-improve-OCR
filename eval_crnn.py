@@ -26,7 +26,7 @@ class EvalCRNN():
             self.test_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_test)
             self.input_size = properties.input_size
         elif self.dataset_name == 'pos':
-            self.test_set = properties.patch_dataset_test
+            self.test_set = os.path.join(args.data_base_path, properties.patch_dataset_test)
             self.input_size = properties.input_size
 
         self.device = torch.device(

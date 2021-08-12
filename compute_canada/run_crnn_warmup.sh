@@ -11,31 +11,28 @@ module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 DATA_PATH="$SLURM_TMPDIR/data"
+DATASET_NAME="textarea_dataset"
 if [ ! -d $DATA_PATH ]
 then
-	echo "Extracttion started"
-	cp /home/ganesh/projects/def-nilanjan/ganesh/datasets/patch_dataset.zip $SLURM_TMPDIR/
+	echo "Extraction started"
+	cp "/home/ganesh/projects/def-nilanjan/ganesh/datasets/$DATASET_NAME.zip" $SLURM_TMPDIR/
 	cd $SLURM_TMPDIR
-	unzip patch_dataset.zip >> /dev/null
+	unzip $DATASET_NAME.zip >> /dev/null
 
 	echo "Dataset unzipped"
-	mv patch_dataset data
-	cd data/patch_dataset_train
-	rm -rf findit RRC # Needs to be revisited
-	cd ../
-	cd patch_dataset_dev # Needs to be revisited
+	mv $DATASET_NAME data
 else
 	echo "Dataset exists"
 fi 
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 BATCH_SIZE=64
-EPOCH=40
+EPOCH=50
 CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/crnn_warmup/crnn_model"
 TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
 CKPT_PATH='/home/ganesh/scratch/experiment_11/crnn_warmup/crnn_model_6'
 mkdir -p $TB_LOGS_PATH $CRNN_MODEL_PATH
 # tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
 echo "Running training script"
-python -u train_crnn.py --batch_size $BATCH_SIZE --epoch $EPOCH --crnn_model_path $CRNN_MODEL_PATH --dataset pos --tb_logs_path $TB_LOGS_PATH --ocr Tesseract --data_base_path $SLURM_TMPDIR 
+python -u train_crnn.py --batch_size $BATCH_SIZE --epoch $EPOCH --crnn_model_path $CRNN_MODEL_PATH --dataset pos --tb_logs_path $TB_LOGS_PATH --ocr Tesseract --data_base_path $SLURM_TMPDIR --batch_size 1
 #--minibatch_subset random 
 # --ckpt_path $CKPT_PATH --start_epoch 6

@@ -36,6 +36,7 @@ class TrainNNPrep():
         self.iter_interval = args.print_iter
         self.ckpt_base_path = args.ckpt_base_path
         self.tensorboard_log_path = args.tb_log_path
+        self.jvp_jitter = args.jvp_jitter
         torch.manual_seed(42)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
@@ -116,11 +117,26 @@ class TrainNNPrep():
         loss = pri_loss + sec_loss
         return loss
 
-    def add_noise(self, imgs, noiser):
+    def add_noise(self, imgs, noiser, noise_coef=1):
         noisy_imgs = []
+        added_noise = []
         for img in imgs:
-            noisy_imgs.append(noiser(img))
-        return torch.stack(noisy_imgs)
+            noisy_img, noise = noiser(img, noise_coef)
+            added_noise.append(noise)
+            noisy_imgs.append(noisy_img)
+        return torch.stack(noisy_imgs), torch.stack(added_noise)
+    
+    def Rop(self, y, x, v):
+        """Computes an Rop.
+        
+        Arguments:
+            y (Variable): output of differentiated function
+            x (Variable): differentiated input
+            v (Variable): vector to be multiplied with Jacobian from the right
+        """
+        v.requires_grad = True
+        w = torch.ones_like(y, requires_grad=True)
+        return torch.autograd.grad(torch.autograd.grad(y, x, w, create_graph=True), w, v)
 
     def train(self):
         noiser = AddGaussianNoice(
@@ -136,7 +152,7 @@ class TrainNNPrep():
             training_loss = 0
             for images, labels, names in self.loader_train:
                 if self.minibatch_sample is not None:
-                    images, labels = self.minibatch_sample(images, labels, self.train_batch_size)
+                    images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
                 self.crnn_model.train()
                 self.prep_model.eval()
                 self.prep_model.zero_grad()
@@ -146,17 +162,44 @@ class TrainNNPrep():
                 img_preds = self.prep_model(X_var)
                 img_preds = img_preds.detach().cpu()
                 temp_loss = 0
-
+                
+                noisy_imgs_list = list()
+                noisy_labels_list = list()
+                jitter_noise_list = list()
                 for i in range(self.inner_limit):
                     self.prep_model.zero_grad()
-                    noisy_imgs = self.add_noise(img_preds, noiser)
+                    noisy_imgs, added_noise = self.add_noise(img_preds, noiser, noise_coef=-1)
+                    noisy_imgs_list.append(noisy_imgs)
+                    jitter_noise_list.append(added_noise)
                     noisy_labels = self.ocr.get_labels(noisy_imgs)
+                    noisy_labels_list.append(noisy_labels)
                     scores, y, pred_size, y_size = self._call_model(
                         noisy_imgs, noisy_labels)
                     loss = self.primary_loss_fn(
                         scores, y, pred_size, y_size)
                     temp_loss += loss.item()
                     loss.backward()
+
+                if self.jvp_jitter:
+                    ori_label_index = 0
+                    with torch.backends.cudnn.flags(enabled=False): 
+                        # ocr_labels = self.ocr.get_labels(img_preds) # Black-box output b(x)
+                        ocr_labels = noisy_labels_list[ori_label_index]
+                        for i in range(self.inner_limit):
+                            self.prep_model.zero_grad()
+                            noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                            noisy_imgs.requires_grad = True
+                            # noisy_labels = self.ocr.get_labels(noisy_imgs)
+                            scores, y, pred_size, y_size = self._call_model(
+                                noisy_imgs, ocr_labels)
+                            jvp = self.Rop(scores, noisy_imgs, added_noise + jitter_noise_list[ori_label_index])
+                            shifted_scores = scores + jvp[0]
+                            noisy_imgs.requires_grad = False
+                            loss = self.primary_loss_fn(
+                                shifted_scores, y, pred_size, y_size)
+                            temp_loss += loss.item()
+                            loss.backward()
+
 
                 CRNN_training_loss = temp_loss/self.inner_limit
                 self.optimizer_crnn.step()
@@ -261,7 +304,7 @@ if __name__ == "__main__":
     parser.add_argument('--std', type=int,
                         default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
-                        default=2, help='number of inner loop iterations in Alogorithm 1')
+                        default=2, help='number of inner loop iterations in Alogorithm 1. Minimum value is 1.')
     parser.add_argument('--crnn_model',
                         help="specify non-default CRNN model location. By default, a new CRNN model will be used")
     parser.add_argument('--prep_model',
@@ -284,7 +327,12 @@ if __name__ == "__main__":
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
     parser.add_argument('--start_epoch', type=int, default=0,
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
+    parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
+                            The function space around the black-box will not be explord.", action="store_true")
     args = parser.parse_args()
+    # Conditions on arguments
+    if args.inner_limit < 1:
+        parser.error("Minimum Value for Inner Limit is 1")
     print(args)
 
     trainer = TrainNNPrep(args)

@@ -185,4 +185,10 @@ def random_subset(images, labels, num_samples):
     """    
     num_images = images.shape[0]
     rand_indices = torch.randperm(num_images)[:num_samples]
-    return images[rand_indices], [labels[i] for i in rand_indices]
+    return images[rand_indices], [labels[i] for i in rand_indices], rand_indices
+
+
+def create_dirs(dirs):
+    for x in dirs:
+        if not os.path.exists(x):
+            os.mkdir(x)
