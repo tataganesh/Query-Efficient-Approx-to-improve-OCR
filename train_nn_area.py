@@ -45,6 +45,8 @@ class TrainNNPrep():
         self.train_batch_size = self.batch_size
         if args.minibatch_subset_prop and self.minibatch_sample:
             self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
+        self.train_subset_size = args.train_subset_size
+        self.val_subset_size = args.val_subset_size
         
         self.input_size = properties.input_size
 
@@ -78,13 +80,13 @@ class TrainNNPrep():
             self.validation_set, transform=transform, include_name=True)
 
 
-        rand_indices = torch.randperm(len(self.dataset))[:properties.train_subset_size]
+        rand_indices = torch.randperm(len(self.dataset))[:self.train_subset_size]
         dataset_subset = torch.utils.data.Subset(self.dataset, rand_indices)
         self.loader_train = torch.utils.data.DataLoader(
             dataset_subset, batch_size=self.batch_size, shuffle=True, drop_last=True)
 
         
-        rand_indices = torch.randperm(len(self.validation_set))[:properties.val_subset_size]
+        rand_indices = torch.randperm(len(self.validation_set))[:self.val_subset_size]
         validation_set_subset = torch.utils.data.Subset(self.validation_set, rand_indices)
         self.loader_validation = torch.utils.data.DataLoader(
             validation_set_subset, batch_size=self.batch_size, drop_last=True)
@@ -179,20 +181,21 @@ class TrainNNPrep():
                         scores, y, pred_size, y_size)
                     temp_loss += loss.item()
                     loss.backward()
-
+                temp_loss = 0
                 if self.jvp_jitter:
                     ori_label_index = 0
                     with torch.backends.cudnn.flags(enabled=False): 
                         # ocr_labels = self.ocr.get_labels(img_preds) # Black-box output b(x)
-                        ocr_labels = noisy_labels_list[ori_label_index]
                         for i in range(self.inner_limit):
+                            ocr_labels = noisy_labels_list[i]
                             self.prep_model.zero_grad()
-                            noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                            # noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                            noisy_imgs = img_preds - jitter_noise_list[i]
                             noisy_imgs.requires_grad = True
                             # noisy_labels = self.ocr.get_labels(noisy_imgs)
                             scores, y, pred_size, y_size = self._call_model(
                                 noisy_imgs, ocr_labels)
-                            jvp = self.Rop(scores, noisy_imgs, added_noise + jitter_noise_list[ori_label_index])
+                            jvp = self.Rop(scores, noisy_imgs, jitter_noise_list[i]*2)
                             shifted_scores = scores + jvp[0]
                             noisy_imgs.requires_grad = False
                             loss = self.primary_loss_fn(
@@ -221,7 +224,7 @@ class TrainNNPrep():
 
                 training_loss += loss.item()
                 if step % self.iter_interval == 0:
-                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}")
+                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}, JVP loss: {temp_loss}")
                 step += 1
 
             writer.add_scalar('Training Loss', training_loss /
@@ -329,11 +332,17 @@ if __name__ == "__main__":
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
                             The function space around the black-box will not be explord.", action="store_true")
+    parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
+                            The function space around the black-box will not be explord.", action="store_true")
+    parser.add_argument('--train_subset_size', default=properties.train_subset_size, help="Subset of training size to use")
+    parser.add_argument('--val_subset_size', default=properties.val_subset_size,
+                            help="Subset of val size to use")
+    
     args = parser.parse_args()
     # Conditions on arguments
     if args.inner_limit < 1:
         parser.error("Minimum Value for Inner Limit is 1")
-    print(args)
+    print(vars(args))
 
     trainer = TrainNNPrep(args)
 
