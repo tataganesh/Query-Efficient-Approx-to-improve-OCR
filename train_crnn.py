@@ -129,7 +129,7 @@ class TrainCRNN():
             for images, labels in self.loader_train:
                 self.model.zero_grad()
                 if self.minibatch_sample is not None:
-                    images, labels = self.minibatch_sample(images, labels, self.train_batch_size)
+                    images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
                 scores, y, pred_size, y_size = self._call_model(images, labels)
                 loss = self.loss_function(scores, y, pred_size, y_size)
                 loss.backward()

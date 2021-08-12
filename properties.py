@@ -14,12 +14,13 @@ patch_dataset_test = "data/patch_dataset_test"
 patch_dataset_dev = "data/patch_dataset_dev"
 
 
+prep_crnn_ckpts = "ckpts"
 crnn_model_path = "./outputs/crnn_trained_model/model"
 crnn_tensor_board = "./outputs/crnn_runs/"
 prep_model_path = "./outputs/prep_trained_model/"
-prep_tensor_board = "./outputs/prep_runs/"
-img_out_path = "./outputs/img_out/"
-param_path = "./outputs/params.txt"
+prep_tensor_board = "prep_runs_tb_logs"
+img_out = "img_out"
+param_path = "params.txt"
 train_subset_size = 50000
 val_subset_size = 10000
 

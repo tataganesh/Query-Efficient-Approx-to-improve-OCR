@@ -152,7 +152,7 @@ class TrainNNPrep():
             training_loss = 0
             for images, labels, names in self.loader_train:
                 if self.minibatch_sample is not None:
-                    images, labels = self.minibatch_sample(images, labels, self.train_batch_size)
+                    images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
                 self.crnn_model.train()
                 self.prep_model.eval()
                 self.prep_model.zero_grad()

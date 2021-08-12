@@ -13,16 +13,17 @@ source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 DATA_PATH="$SLURM_TMPDIR/data"
+DATASET_NAME="patch_dataset"
 if [ ! -d $DATA_PATH ]
 then
-    echo "VGG Dataset extraction started"
-    cp /home/ganesh/projects/def-nilanjan/ganesh/datasets/vgg.zip $SLURM_TMPDIR/
+    echo "$DATASET_NAME Dataset extraction started"
+    cp "/home/ganesh/projects/def-nilanjan/ganesh/datasets/$DATASET_NAME.zip" $SLURM_TMPDIR/
     cd $SLURM_TMPDIR
-    unzip vgg.zip >> /dev/null
-    mv vgg data
-    echo "VGG Dataset extracted"
+    unzip "$DATASET_NAME.zip" >> /dev/null
+    mv $DATASET_NAME data
+    echo "$DATASET_NAME Dataset extracted"
 else
-    echo "VGG Dataset exists"
+    echo "$DATASET_NAME Dataset exists"
 fi
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 BATCH_SIZE=1

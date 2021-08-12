@@ -21,12 +21,13 @@ class EvalPrep():
         self.prep_model_path = args.prep_path
         self.ocr_name = args.ocr
         self.dataset_name = args.dataset
+        self.show_orig = args.show_orig
 
         if self.dataset_name == 'vgg':
             self.test_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_test)
             self.input_size = properties.input_size
         elif self.dataset_name == 'pos':
-            self.test_set = properties.patch_dataset_test
+            self.test_set = os.path.join(args.data_base_path, properties.patch_dataset_test)
             self.input_size = properties.input_size
 
         self.device = torch.device(
@@ -116,12 +117,15 @@ class EvalPrep():
             text_crops, labels = get_text_stack(
                 image.detach(), labels_dict, self.input_size)
             lbl_count += len(labels)
-            ocr_labels = self.ocr.get_labels(text_crops)
+            if self.show_orig:
+                ocr_labels = self.ocr.get_labels(text_crops)
 
-            ori_crt_count, ori_cer = compare_labels(
-                ocr_labels, labels)
-            ori_lbl_crt_count += ori_crt_count
-            ori_lbl_cer += ori_cer
+                ori_crt_count, ori_cer = compare_labels(
+                    ocr_labels, labels)
+                ori_lbl_crt_count += ori_crt_count
+                ori_lbl_cer += ori_cer
+                ori_cer = round(ori_cer/len(labels), 2)
+
 
             image = image.unsqueeze(0)
             X_var = image.to(self.device)
@@ -136,7 +140,6 @@ class EvalPrep():
             prd_lbl_crt_count += prd_crt_count
             prd_lbl_cer += prd_cer
 
-            ori_cer = round(ori_cer/len(labels), 2)
             prd_cer = round(prd_cer/len(labels), 2)
 
             if self.show_img:
@@ -148,10 +151,11 @@ class EvalPrep():
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
             prd_lbl_crt_count, lbl_count, prd_lbl_crt_count/lbl_count))
-        print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
-            ori_lbl_crt_count, lbl_count, ori_lbl_crt_count/lbl_count))
-        print('Average CER from original images: ({:.5f})'.format(
-            ori_lbl_cer/lbl_count))
+        if self.show_orig:
+            print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
+                ori_lbl_crt_count, lbl_count, ori_lbl_crt_count/lbl_count))
+            print('Average CER from original images: ({:.5f})'.format(
+                ori_lbl_cer/lbl_count))
         print('Average CER from predicted images: ({:.5f})'.format(
             prd_lbl_cer/lbl_count))
 
@@ -180,6 +184,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", default=64, type=int,  help='Inference batch size')
     parser.add_argument('--data_base_path',
                         help='Base path training, validation and test data', default=".")
+    parser.add_argument('--show_orig', help="Show original flow evaluation", action="store_true")
     
     args = parser.parse_args()
     print(args)

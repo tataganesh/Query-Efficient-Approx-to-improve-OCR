@@ -12,7 +12,7 @@ import torchvision.transforms as transforms
 from models.model_crnn import CRNN
 from models.model_unet import UNet
 from datasets.patch_dataset import PatchDataset
-from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset
+from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs
 from utils import get_text_stack, get_ocr_helper, compare_labels
 from transform_helper import AddGaussianNoice
 import properties as properties
@@ -28,8 +28,11 @@ class TrainNNPrep():
         self.inner_limit = args.inner_limit
         self.crnn_model_path = args.crnn_model
         self.prep_model_path = args.prep_model
-        self.ckpt_base_path = args.ckpt_base_path
-        self.tensorboard_log_path = args.tb_log_path
+        self.exp_base_path = args.exp_base_path
+        self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
+        self.tensorboard_log_path = os.path.join(self.exp_base_path, properties.prep_tensor_board)
+        self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
+        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path])
 
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
@@ -37,8 +40,8 @@ class TrainNNPrep():
         self.is_random_std = args.random_std
         torch.manual_seed(42)
 
-        self.train_set = os.path.join(args.data_base_path, properties.pos_text_dataset_train)
-        self.validation_set = os.path.join(args.data_base_path, properties.pos_text_dataset_dev)
+        self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
+        self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
         self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
         self.train_batch_prop = 1
@@ -58,7 +61,7 @@ class TrainNNPrep():
             self.crnn_model = CRNN(self.vocab_size, False).to(self.device)
         else:
             self.crnn_model = torch.load(
-                properties.crnn_model_path).to(self.device)
+                self.crnn_model_path).to(self.device)
         self.crnn_model.register_backward_hook(self.crnn_model.backward_hook)
 
         if self.prep_model_path is None:
@@ -68,9 +71,9 @@ class TrainNNPrep():
                 self.prep_model_path).to(self.device)
 
         self.dataset = PatchDataset(
-            properties.patch_dataset_train, pad=True, include_name=True)
+            self.train_set, pad=True, include_name=True)
         self.validation_set = PatchDataset(
-            properties.patch_dataset_dev, pad=True)
+            self.validation_set, pad=True)
         self.loader_train = torch.utils.data.DataLoader(
             self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=PatchDataset.collate)
 
@@ -138,11 +141,14 @@ class TrainNNPrep():
 
                     text_crops, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
-                    total_samples += text_crops.shape[0].item()
+                    total_samples += text_crops.shape[0]
+                    sample_indices = None
                     if self.minibatch_sample is not None:
-                        num_samples_subset = int(self.text_crops.shape[0]*self.train_batch_prop)
-                        text_crops, labels = self.minibatch_sample(text_crops, labels, num_samples_subset)
-                    subset_samples += text_crops.shape[0].item()
+                        num_samples_subset = int(text_crops.shape[0]*self.train_batch_prop)
+                        if num_samples_subset == 0:
+                            num_samples_subset = 1
+                        text_crops, labels, sample_indices = self.minibatch_sample(text_crops, labels, num_samples_subset)
+                    subset_samples += text_crops.shape[0]
                     temp_loss = 0
                     for i in range(self.inner_limit):
                         self.prep_model.zero_grad()
@@ -174,6 +180,12 @@ class TrainNNPrep():
                     img_out = self.prep_model(X_var)[0]
                     n_text_crops, labels = get_text_stack(
                         img_out, labels_dict, self.input_size)
+                    total_samples += n_text_crops.shape[0]
+                    if self.minibatch_sample is not None:
+                        n_text_crops = n_text_crops[sample_indices]
+                        labels = [labels[i] for i in sample_indices]
+                    subset_samples += n_text_crops.shape[0]
+
                     scores, y, pred_size, y_size = self._call_model(
                         n_text_crops, labels)
 
@@ -225,10 +237,12 @@ class TrainNNPrep():
                               validation_loss/self.val_set_size, epoch + 1)
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
-            img.save(properties.img_out_path+'out_'+str(epoch)+'.png', 'PNG')
+            # img.save(properties.img_out_path+'out_'+str(epoch)+'.png', 'PNG')
+            img.save(os.path.join(self.img_out_path, 'out_'+str(epoch)+'.png'), 'PNG')
             if epoch == 0:
                 img = transforms.ToPILImage()(image.cpu()[0])
-                img.save(properties.img_out_path+'out_original.png', 'PNG')
+                # img.save(properties.img_out_path+'out_original.png', 'PNG')
+                img.save(os.path.join(self.img_out_path, 'out_original.png'), 'PNG')
 
             print("CRNN correct count: %d; %s correct count: %d; (validation set size:%d)" % (
                 pred_correct_count, self.ocr_name, tess_correct_count, label_count))
@@ -265,10 +279,10 @@ if __name__ == "__main__":
                         help="specify non-default CRNN model location. If given empty, a new CRNN model will be used")
     parser.add_argument('--prep_model',
                         help="specify non-default Prep model location. By default, a new Prep model will be used")
-    parser.add_argument('--ckpt_base_path', default=properties.prep_model_path,
-                        help='Base path to save model checkpoints. Defaults to properties path')
-    parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
-                        help='Base path to save Tensorboard summaries.') 
+    parser.add_argument('--exp_base_path', default=".",
+                        help='Base path for experiment. Defaults to current directory')
+    # parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
+    #                     help='Base path to save Tensorboard summaries.') 
     parser.add_argument('--ocr', default='Tesseract',
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
@@ -290,7 +304,7 @@ if __name__ == "__main__":
     trainer.train()
     end = datetime.datetime.now()
 
-    with open(properties.param_path, 'w') as filetowrite:
+    with open(os.path.join(args.exp_base_path, properties.param_path), 'w') as filetowrite:
         filetowrite.write(str(start) + '\n')
         filetowrite.write(str(args) + '\n')
         filetowrite.write(str(end) + '\n')
