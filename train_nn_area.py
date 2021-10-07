@@ -16,6 +16,8 @@ from utils import get_ocr_helper, compare_labels, save_img, create_dirs
 from utils import random_subset
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
+import wandb
+wandb.init(project='ocr-calls-reduction', entity='tataganesh')
 
 minibatch_subset_methods = {"random": random_subset}
 
@@ -167,10 +169,12 @@ class TrainNNPrep():
         print(f"Batch size is {self.batch_size}")
         print(f"Train batch size is {self.train_batch_size}")
         validation_step = 0
+        jvp_train_cer = 0
         self.crnn_model.zero_grad()
         for epoch in range(self.start_epoch, self.max_epochs):
             step = 0
             training_loss = 0
+            jvp_loss = 0
             for images, labels, names in self.loader_train:
                 if self.minibatch_sample is not None:
                     images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
@@ -200,8 +204,8 @@ class TrainNNPrep():
                         scores, y, pred_size, y_size)
                     temp_loss += loss.item()
                     loss.backward()
-                temp_loss = 0
-                if self.jvp_jitter and epoch >= self.warmup_epoch:
+                jvp_loss_temp = 0
+                if self.jvp_jitter and epoch >= self.warmup_epochs:
                     ori_label_index = 0
                     with torch.backends.cudnn.flags(enabled=False): 
                         # ocr_labels = self.ocr.get_labels(img_preds) # Black-box output b(x)
@@ -212,7 +216,7 @@ class TrainNNPrep():
                             noisy_imgs = img_preds - jitter_noise_list[i]
                             noisy_imgs.data.clamp_(0, 1)
                             noisy_imgs.requires_grad = True
-                            # noisy_labels = self.ocr.get_labels(noisy_imgs)
+                            noisy_labels = noisy_labels_list[i]
                             scores, y, pred_size, y_size = self._call_model(
                                 noisy_imgs, ocr_labels)
                             jvp = self.Rop(scores, noisy_imgs, jitter_noise_list[i]*2)
@@ -221,8 +225,14 @@ class TrainNNPrep():
                             noisy_imgs.requires_grad = False
                             loss = self.primary_loss_fn(
                                 shifted_scores, y, pred_size, y_size)
-                            temp_loss += loss.item()
-                            loss.backward()
+                            
+                            jvp_loss_temp += loss.item()
+                            jvp_loss += jvp_loss_temp / self.inner_limit
+
+                            preds = pred_to_string(shifted_scores, labels, self.index_to_char)
+                            # loss.backward()
+                            crt, cer = compare_labels(preds, noisy_labels)
+                            jvp_train_cer += cer
 
 
                 CRNN_training_loss = temp_loss/self.inner_limit
@@ -247,11 +257,17 @@ class TrainNNPrep():
                 if step % 30 == 0:
                     self.log_gradients_in_model(self.crnn_model, writer, int(self.train_set_size//self.train_batch_size)*epoch + step)
                 if step % self.iter_interval == 0:
-                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}, JVP loss: {temp_loss}")
+                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}, JVP loss: {jvp_loss_temp}")
                 step += 1
 
-            writer.add_scalar('Training Loss', training_loss /
-                              (self.train_set_size//self.train_batch_size), epoch + 1) # Change to batch size if not randomly sampling from mini-batches
+            
+            train_loss =  training_loss / (self.train_set_size//self.train_batch_size)
+            jvp_cer = jvp_train_cer/(self.train_set_size*self.inner_limit)
+            if self.jvp_jitter:
+                jvp_loss = jvp_loss / (self.train_set_size//self.train_batch_size)
+                writer.add_scalar('Jvp Loss', jvp_loss, epoch + 1) 
+            writer.add_scalar('Training Loss', train_loss, epoch + 1) # Change to batch size if not randomly sampling from mini-batches
+
 
             self.scheduler_crnn.step()
             self.scheduler_prep.step()
@@ -281,16 +297,25 @@ class TrainNNPrep():
                     pred_CER += cer
                     tess_CER += tess_cer
                     validation_step += 1
+            CRNN_accuracy = pred_correct_count/self.val_set_size
+            OCR_accuracy = tess_accuracy/self.val_set_size
+            CRNN_cer = pred_CER/self.val_set_size
+            OCR_cer = tess_CER/self.val_set_size
+            val_loss = validation_loss / (self.val_set_size//self.batch_size)
             writer.add_scalar('Accuracy/CRNN_output',
-                              pred_correct_count/self.val_set_size, epoch + 1)
+                              CRNN_accuracy, epoch + 1)
             writer.add_scalar('Accuracy/'+self.ocr_name+'_output',
-                              tess_accuracy/self.val_set_size, epoch + 1)
+                              OCR_accuracy, epoch + 1)
             writer.add_scalar('WER and CER/CRNN_CER',
-                              pred_CER/self.val_set_size, epoch + 1)
+                              CRNN_cer, epoch + 1)
             writer.add_scalar('WER and CER/'+self.ocr_name+'_CER',
-                              tess_CER/self.val_set_size, epoch + 1)
-            writer.add_scalar('Validation Loss', validation_loss /
-                              (self.val_set_size//self.batch_size), epoch + 1)
+                              OCR_cer, epoch + 1)
+            writer.add_scalar('Validation Loss', val_loss, epoch + 1)
+            wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
+                        "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
+                        "train_loss": train_loss, "jvp_cer": jvp_cer})
+
+            
             save_img(img_preds.cpu(), 'out_' +
                      str(epoch), self.img_out_path, 8)
             if epoch == 0:
@@ -306,6 +331,7 @@ class TrainNNPrep():
                                                                                (self.train_set_size //
                                                                                 self.train_batch_size),
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
+            print(f"JVP loss: {jvp_loss/(self.train_set_size//self.train_batch_size)}")
             torch.save(self.prep_model,
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model, os.path.join(self.ckpt_base_path,
@@ -329,7 +355,7 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', type=int,
                         default=50, help='number of epochs')
     parser.add_argument('--warmup_epochs', type=int,
-                        default=5, help='number of warmup epochs')
+                        default=0, help='number of warmup epochs')
     parser.add_argument('--std', type=int,
                         default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
@@ -365,12 +391,16 @@ if __name__ == "__main__":
                             help="Subset of val size to use", type=int)
     parser.add_argument('--lr_scheduler',
                             help="Specify scheduler to be used")
+    parser.add_argument('--exp_type', default="jvp_jitter",
+                            help="Specify type of experiment (JVP Jitter, Sample Dropping Etc.)")
     
     args = parser.parse_args()
     # Conditions on arguments
     if args.inner_limit < 1:
         parser.error("Minimum Value for Inner Limit is 1")
     print(vars(args))
+    wandb.config.update(vars(args))
+    wandb.run.name = f"{args.exp_type}_{wandb.run.id}"
 
     trainer = TrainNNPrep(args)
 
