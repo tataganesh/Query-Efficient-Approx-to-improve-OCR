@@ -12,10 +12,12 @@ from models.model_crnn import CRNN
 from models.model_unet import UNet
 from datasets.img_dataset import ImgDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string
-from utils import get_ocr_helper, compare_labels, save_img
+from utils import get_ocr_helper, compare_labels, save_img, create_dirs
 from utils import random_subset
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
+import wandb
+wandb.init(project='ocr-calls-reduction', entity='tataganesh')
 
 minibatch_subset_methods = {"random": random_subset}
 
@@ -26,16 +28,24 @@ class TrainNNPrep():
         self.lr_crnn = args.lr_crnn
         self.lr_prep = args.lr_prep
         self.max_epochs = args.epoch
+        self.warmup_epochs = args.warmup_epochs
         self.inner_limit = args.inner_limit
         self.crnn_model_path = args.crnn_model
         self.prep_model_path = args.prep_model
+
+        self.exp_base_path = args.exp_base_path
+        self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
+        self.tensorboard_log_path = os.path.join(self.exp_base_path, properties.prep_tensor_board)
+        self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
+        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path])
+
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
         self.std = args.std
         self.is_random_std = args.random_std
         self.iter_interval = args.print_iter
         self.ckpt_base_path = args.ckpt_base_path
-        self.tensorboard_log_path = args.tb_log_path
+        # self.tensorboard_log_path = args.tb_log_path
         self.jvp_jitter = args.jvp_jitter
         torch.manual_seed(42)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
@@ -45,6 +55,8 @@ class TrainNNPrep():
         self.train_batch_size = self.batch_size
         if args.minibatch_subset_prop and self.minibatch_sample:
             self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
+        self.train_subset_size = args.train_subset_size
+        self.val_subset_size = args.val_subset_size
         
         self.input_size = properties.input_size
 
@@ -78,13 +90,13 @@ class TrainNNPrep():
             self.validation_set, transform=transform, include_name=True)
 
 
-        rand_indices = torch.randperm(len(self.dataset))[:properties.train_subset_size]
+        rand_indices = torch.randperm(len(self.dataset))[:self.train_subset_size]
         dataset_subset = torch.utils.data.Subset(self.dataset, rand_indices)
         self.loader_train = torch.utils.data.DataLoader(
             dataset_subset, batch_size=self.batch_size, shuffle=True, drop_last=True)
 
         
-        rand_indices = torch.randperm(len(self.validation_set))[:properties.val_subset_size]
+        rand_indices = torch.randperm(len(self.validation_set))[:self.val_subset_size]
         validation_set_subset = torch.utils.data.Subset(self.validation_set, rand_indices)
         self.loader_validation = torch.utils.data.DataLoader(
             validation_set_subset, batch_size=self.batch_size, drop_last=True)
@@ -98,6 +110,12 @@ class TrainNNPrep():
             self.crnn_model.parameters(), lr=self.lr_crnn, weight_decay=0)
         self.optimizer_prep = optim.Adam(
             self.prep_model.parameters(), lr=self.lr_prep, weight_decay=0)
+        
+        self.lr_scheulder = args.lr_scheduler 
+        if self.lr_scheduler == "cosine":
+            self.scheduler_crnn = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_crnn, T_max=self.max_epochs)
+            self.scheduler_prep = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_prep, T_max=self.max_epochs)
+
 
     def _call_model(self, images, labels):
         X_var = images.to(self.device)
@@ -125,6 +143,12 @@ class TrainNNPrep():
             added_noise.append(noise)
             noisy_imgs.append(noisy_img)
         return torch.stack(noisy_imgs), torch.stack(added_noise)
+
+    def log_gradients_in_model(self, model, writer, step):
+        for tag, value in model.named_parameters():
+            if value.grad is not None:
+                writer.add_histogram(tag + "/grad", value.grad.cpu(), step)
+                writer.add_histogram(tag + "/value", value.data.cpu(), step)
     
     def Rop(self, y, x, v):
         """Computes an Rop.
@@ -136,20 +160,22 @@ class TrainNNPrep():
         """
         v.requires_grad = True
         w = torch.ones_like(y, requires_grad=True)
-        return torch.autograd.grad(torch.autograd.grad(y, x, w, create_graph=True), w, v)
+        return list(torch.autograd.grad(torch.autograd.grad(y, x, w, create_graph=True), w, v))
 
     def train(self):
         noiser = AddGaussianNoice(
-            std=self.std, is_stochastic=self.is_random_std)
+            std=self.std, is_stochastic=self.is_random_std, return_noise=True)
         writer = SummaryWriter(self.tensorboard_log_path)
         
         print(f"Batch size is {self.batch_size}")
         print(f"Train batch size is {self.train_batch_size}")
         validation_step = 0
+        jvp_train_cer = 0
         self.crnn_model.zero_grad()
         for epoch in range(self.start_epoch, self.max_epochs):
             step = 0
             training_loss = 0
+            jvp_loss = 0
             for images, labels, names in self.loader_train:
                 if self.minibatch_sample is not None:
                     images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
@@ -179,26 +205,35 @@ class TrainNNPrep():
                         scores, y, pred_size, y_size)
                     temp_loss += loss.item()
                     loss.backward()
-
-                if self.jvp_jitter:
+                jvp_loss_temp = 0
+                if self.jvp_jitter and epoch >= self.warmup_epochs:
                     ori_label_index = 0
                     with torch.backends.cudnn.flags(enabled=False): 
                         # ocr_labels = self.ocr.get_labels(img_preds) # Black-box output b(x)
-                        ocr_labels = noisy_labels_list[ori_label_index]
                         for i in range(self.inner_limit):
+                            ocr_labels = noisy_labels_list[i]
                             self.prep_model.zero_grad()
-                            noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                            # noisy_imgs, added_noise = self.add_noise(img_preds, noiser)
+                            noisy_imgs = img_preds - jitter_noise_list[i]
+                            noisy_imgs.data.clamp_(0, 1)
                             noisy_imgs.requires_grad = True
-                            # noisy_labels = self.ocr.get_labels(noisy_imgs)
-                            scores, y, pred_size, y_size = self._call_model(
-                                noisy_imgs, ocr_labels)
-                            jvp = self.Rop(scores, noisy_imgs, added_noise + jitter_noise_list[ori_label_index])
+                            noisy_labels = noisy_labels_list[i]
+                            # scores, y, pred_size, y_size = self._call_model(
+                            #     noisy_imgs, ocr_labels)
+                            jvp = self.Rop(scores, noisy_imgs, jitter_noise_list[i]*2)
                             shifted_scores = scores + jvp[0]
+                            # jvp[0] = jvp[0].detach()
                             noisy_imgs.requires_grad = False
                             loss = self.primary_loss_fn(
                                 shifted_scores, y, pred_size, y_size)
-                            temp_loss += loss.item()
-                            loss.backward()
+                            
+                            jvp_loss_temp += loss.item()
+                            jvp_loss += jvp_loss_temp / self.inner_limit
+
+                            preds = pred_to_string(shifted_scores, labels, self.index_to_char)
+                            # loss.backward()
+                            crt, cer = compare_labels(preds, noisy_labels)
+                            jvp_train_cer += cer
 
 
                 CRNN_training_loss = temp_loss/self.inner_limit
@@ -220,13 +255,24 @@ class TrainNNPrep():
                 self.optimizer_prep.step()
 
                 training_loss += loss.item()
+                if step % 30 == 0:
+                    self.log_gradients_in_model(self.crnn_model, writer, int(self.train_set_size//self.train_batch_size)*epoch + step)
                 if step % self.iter_interval == 0:
-                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}")
+                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}, JVP loss: {jvp_loss_temp}")
                 step += 1
 
-            writer.add_scalar('Training Loss', training_loss /
-                              (self.train_set_size//self.train_batch_size), epoch + 1) # Change to batch size if not randomly sampling from mini-batches
+            
+            train_loss =  training_loss / (self.train_set_size//self.train_batch_size)
+            jvp_cer = jvp_train_cer/(self.train_set_size*self.inner_limit)
+            if self.jvp_jitter:
+                jvp_loss = jvp_loss / (self.train_set_size//self.train_batch_size)
+                writer.add_scalar('Jvp Loss', jvp_loss, epoch + 1) 
+            writer.add_scalar('Training Loss', train_loss, epoch + 1) # Change to batch size if not randomly sampling from mini-batches
 
+
+            if self.lr_scheduler:
+                self.scheduler_crnn.step()
+                self.scheduler_prep.step()
             self.prep_model.eval()
             self.crnn_model.eval()
             pred_correct_count = 0
@@ -253,22 +299,30 @@ class TrainNNPrep():
                     pred_CER += cer
                     tess_CER += tess_cer
                     validation_step += 1
+            CRNN_accuracy = pred_correct_count/self.val_set_size
+            OCR_accuracy = tess_accuracy/self.val_set_size
+            CRNN_cer = pred_CER/self.val_set_size
+            OCR_cer = tess_CER/self.val_set_size
+            val_loss = validation_loss / (self.val_set_size//self.batch_size)
             writer.add_scalar('Accuracy/CRNN_output',
-                              pred_correct_count/self.val_set_size, epoch + 1)
+                              CRNN_accuracy, epoch + 1)
             writer.add_scalar('Accuracy/'+self.ocr_name+'_output',
-                              tess_accuracy/self.val_set_size, epoch + 1)
+                              OCR_accuracy, epoch + 1)
             writer.add_scalar('WER and CER/CRNN_CER',
-                              pred_CER/self.val_set_size, epoch + 1)
+                              CRNN_cer, epoch + 1)
             writer.add_scalar('WER and CER/'+self.ocr_name+'_CER',
-                              tess_CER/self.val_set_size, epoch + 1)
-            writer.add_scalar('Validation Loss', validation_loss /
-                              (self.val_set_size//self.batch_size), epoch + 1)
+                              OCR_cer, epoch + 1)
+            writer.add_scalar('Validation Loss', val_loss, epoch + 1)
+            wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
+                        "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
+                        "train_loss": train_loss, "jvp_cer": jvp_cer})
 
+            
             save_img(img_preds.cpu(), 'out_' +
-                     str(epoch), properties.img_out_path, 8)
+                     str(epoch), self.img_out_path, 8)
             if epoch == 0:
                 save_img(images.cpu(), 'out_original',
-                         properties.img_out_path, 8)
+                         self.img_out_path, 8)
 
             print("CRNN correct count: %d; %s correct count: %d; (validation set size:%d)" % (
                 pred_correct_count, self.ocr_name, tess_accuracy, self.val_set_size))
@@ -279,6 +333,7 @@ class TrainNNPrep():
                                                                                (self.train_set_size //
                                                                                 self.train_batch_size),
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
+            print(f"JVP loss: {jvp_loss/(self.train_set_size//self.train_batch_size)}")
             torch.save(self.prep_model,
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model, os.path.join(self.ckpt_base_path,
@@ -301,6 +356,8 @@ if __name__ == "__main__":
                         help='prep model learning rate, not used by adadealta')
     parser.add_argument('--epoch', type=int,
                         default=50, help='number of epochs')
+    parser.add_argument('--warmup_epochs', type=int,
+                        default=0, help='number of warmup epochs')
     parser.add_argument('--std', type=int,
                         default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
@@ -319,8 +376,10 @@ if __name__ == "__main__":
                         default=100, help='Interval for printing iterations per Epoch')
     parser.add_argument('--ckpt_base_path', default=properties.prep_model_path,
                         help='Base path to save model checkpoints. Defaults to properties path')
-    parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
-                        help='Base path to save Tensorboard summaries.') 
+    # parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
+    #                     help='Base path to save Tensorboard summaries.') 
+    parser.add_argument('--exp_base_path', default=".",
+                        help='Base path for experiment. Defaults to current directory')
     parser.add_argument('--minibatch_subset',  choices=['random'], 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
@@ -329,11 +388,21 @@ if __name__ == "__main__":
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
                             The function space around the black-box will not be explord.", action="store_true")
+    parser.add_argument('--train_subset_size', default=properties.train_subset_size, help="Subset of training size to use", type=int)
+    parser.add_argument('--val_subset_size', default=properties.val_subset_size,
+                            help="Subset of val size to use", type=int)
+    parser.add_argument('--lr_scheduler',
+                            help="Specify scheduler to be used")
+    parser.add_argument('--exp_type', default="jvp_jitter",
+                            help="Specify type of experiment (JVP Jitter, Sample Dropping Etc.)")
+    
     args = parser.parse_args()
     # Conditions on arguments
     if args.inner_limit < 1:
         parser.error("Minimum Value for Inner Limit is 1")
-    print(args)
+    print(vars(args))
+    wandb.config.update(vars(args))
+    wandb.run.name = f"{args.exp_type}_{wandb.run.id}"
 
     trainer = TrainNNPrep(args)
 
@@ -341,7 +410,8 @@ if __name__ == "__main__":
     trainer.train()
     end = datetime.datetime.now()
 
-    with open(properties.param_path, 'w') as filetowrite:
+    with open(os.path.join(args.exp_base_path, properties.param_path), 'w') as filetowrite:
         filetowrite.write(str(start) + '\n')
         filetowrite.write(str(args) + '\n')
         filetowrite.write(str(end) + '\n')
+
