@@ -111,7 +111,8 @@ class TrainNNPrep():
         self.optimizer_prep = optim.Adam(
             self.prep_model.parameters(), lr=self.lr_prep, weight_decay=0)
         
-        if args.lr_scheduler == "cosine":
+        self.lr_scheulder = args.lr_scheduler 
+        if self.lr_scheduler == "cosine":
             self.scheduler_crnn = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_crnn, T_max=self.max_epochs)
             self.scheduler_prep = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_prep, T_max=self.max_epochs)
 
@@ -217,8 +218,8 @@ class TrainNNPrep():
                             noisy_imgs.data.clamp_(0, 1)
                             noisy_imgs.requires_grad = True
                             noisy_labels = noisy_labels_list[i]
-                            scores, y, pred_size, y_size = self._call_model(
-                                noisy_imgs, ocr_labels)
+                            # scores, y, pred_size, y_size = self._call_model(
+                            #     noisy_imgs, ocr_labels)
                             jvp = self.Rop(scores, noisy_imgs, jitter_noise_list[i]*2)
                             shifted_scores = scores + jvp[0]
                             # jvp[0] = jvp[0].detach()
@@ -269,8 +270,9 @@ class TrainNNPrep():
             writer.add_scalar('Training Loss', train_loss, epoch + 1) # Change to batch size if not randomly sampling from mini-batches
 
 
-            self.scheduler_crnn.step()
-            self.scheduler_prep.step()
+            if self.lr_scheduler:
+                self.scheduler_crnn.step()
+                self.scheduler_prep.step()
             self.prep_model.eval()
             self.crnn_model.eval()
             pred_correct_count = 0
