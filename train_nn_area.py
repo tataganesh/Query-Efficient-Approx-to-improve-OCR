@@ -17,6 +17,8 @@ from utils import random_subset
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
 import wandb
+import csv
+import pandas as pd
 wandb.init(project='ocr-calls-reduction', entity='tataganesh')
 
 minibatch_subset_methods = {"random": random_subset}
@@ -57,6 +59,7 @@ class TrainNNPrep():
             self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
+        self.track_importance = pd.DataFrame()
         
         self.input_size = properties.input_size
 
@@ -85,15 +88,17 @@ class TrainNNPrep():
             transforms.ToTensor(),
         ])
         self.dataset = ImgDataset(
-            self.train_set, transform=transform, include_name=True)
+            self.train_set, transform=transform, include_name=True, include_index=True)
         self.validation_set = ImgDataset(
             self.validation_set, transform=transform, include_name=True)
 
 
         rand_indices = torch.randperm(len(self.dataset))[:self.train_subset_size]
-        dataset_subset = torch.utils.data.Subset(self.dataset, rand_indices)
+        self.train_subset_index_mapping = torch.zeros(len(self.dataset))
+        self.train_subset_index_mapping[rand_indices] = torch.arange(0, self.train_subset_size).float()
+        self.dataset_subset = torch.utils.data.Subset(self.dataset, rand_indices)
         self.loader_train = torch.utils.data.DataLoader(
-            dataset_subset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+            self.dataset_subset, batch_size=self.batch_size, shuffle=True, drop_last=True)
 
         
         rand_indices = torch.randperm(len(self.validation_set))[:self.val_subset_size]
@@ -103,6 +108,8 @@ class TrainNNPrep():
 
         self.train_set_size = len(self.loader_train.dataset)
         self.val_set_size = len(self.loader_validation.dataset)
+        self.sample_importance = torch.zeros(self.train_set_size)
+        self.lamda = args.history_lamda
 
         self.primary_loss_fn = CTCLoss().to(self.device)
         self.secondary_loss_fn = MSELoss().to(self.device)
@@ -111,7 +118,7 @@ class TrainNNPrep():
         self.optimizer_prep = optim.Adam(
             self.prep_model.parameters(), lr=self.lr_prep, weight_decay=0)
         
-        self.lr_scheulder = args.lr_scheduler 
+        self.lr_scheduler = args.lr_scheduler 
         if self.lr_scheduler == "cosine":
             self.scheduler_crnn = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_crnn, T_max=self.max_epochs)
             self.scheduler_prep = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_prep, T_max=self.max_epochs)
@@ -163,6 +170,10 @@ class TrainNNPrep():
         return list(torch.autograd.grad(torch.autograd.grad(y, x, w, create_graph=True), w, v))
 
     def train(self):
+        all_file_names = list()
+        for images, labels, names, indices in self.loader_train:
+            all_file_names.extend(names)
+
         noiser = AddGaussianNoice(
             std=self.std, is_stochastic=self.is_random_std, return_noise=True)
         writer = SummaryWriter(self.tensorboard_log_path)
@@ -172,11 +183,18 @@ class TrainNNPrep():
         validation_step = 0
         jvp_train_cer = 0
         self.crnn_model.zero_grad()
+        
         for epoch in range(self.start_epoch, self.max_epochs):
+
             step = 0
             training_loss = 0
             jvp_loss = 0
-            for images, labels, names in self.loader_train:
+            # Weighted sampling
+            if epoch >= self.warmup_epochs:
+                weightedSampler = torch.utils.data.WeightedRandomSampler(weights=self.sample_importance, num_samples=self.train_set_size) # Need to implement  interface for obtaining samplers
+                self.loader_train = torch.utils.data.DataLoader(self.loader_train.dataset, batch_size=self.batch_size, drop_last=True, sampler=weightedSampler)
+            for images, labels, names, indices in self.loader_train:
+                indices = self.train_subset_index_mapping[indices].long()
                 if self.minibatch_sample is not None:
                     images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
                 self.crnn_model.train()
@@ -188,7 +206,6 @@ class TrainNNPrep():
                 img_preds = self.prep_model(X_var)
                 img_preds = img_preds.detach().cpu()
                 temp_loss = 0
-                
                 noisy_imgs_list = list()
                 noisy_labels_list = list()
                 jitter_noise_list = list()
@@ -205,6 +222,7 @@ class TrainNNPrep():
                         scores, y, pred_size, y_size)
                     temp_loss += loss.item()
                     loss.backward()
+                    self.sample_importance[indices.cpu()] += self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * temp_loss/self.inner_limit
                 jvp_loss_temp = 0
                 if self.jvp_jitter and epoch >= self.warmup_epochs:
                     ori_label_index = 0
@@ -259,7 +277,7 @@ class TrainNNPrep():
                     self.log_gradients_in_model(self.crnn_model, writer, int(self.train_set_size//self.train_batch_size)*epoch + step)
                 if step % self.iter_interval == 0:
                     print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}, JVP loss: {jvp_loss_temp}")
-                step += 1
+                step += 1 
 
             
             train_loss =  training_loss / (self.train_set_size//self.train_batch_size)
@@ -340,6 +358,14 @@ class TrainNNPrep():
                        "CRNN_model_" + str(epoch)))
         writer.flush()
         writer.close()
+        # self.dataset_subset[]
+        self.track_importance["File Name"] = [name for image, label, name, indice in self.dataset_subset]
+        self.track_importance["Importance (Loss)"] = self.sample_importance.numpy()
+        self.track_importance.to_csv(os.path.join(self.exp_base_path, "Sample_Data_Importance_loss.csv"))
+        sample_importance_table = wandb.Table(dataframe=self.track_importance)
+        wandb.log({"Sample Importance": sample_importance_table})
+                
+
 
 
 if __name__ == "__main__":
@@ -357,7 +383,7 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', type=int,
                         default=50, help='number of epochs')
     parser.add_argument('--warmup_epochs', type=int,
-                        default=0, help='number of warmup epochs')
+                        default=3, help='number of warmup epochs')
     parser.add_argument('--std', type=int,
                         default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
@@ -393,8 +419,10 @@ if __name__ == "__main__":
                             help="Subset of val size to use", type=int)
     parser.add_argument('--lr_scheduler',
                             help="Specify scheduler to be used")
-    parser.add_argument('--exp_type', default="jvp_jitter",
-                            help="Specify type of experiment (JVP Jitter, Sample Dropping Etc.)")
+    parser.add_argument('--exp_name', default="jvp_jitter",
+                            help="Specify name of experiment (JVP Jitter, Sample Dropping Etc.)")
+    parser.add_argument('--history_lamda', default=0.1, type=float, 
+                            help="Lamda for maintaining exponential average of sample information")
     
     args = parser.parse_args()
     # Conditions on arguments
@@ -402,7 +430,7 @@ if __name__ == "__main__":
         parser.error("Minimum Value for Inner Limit is 1")
     print(vars(args))
     wandb.config.update(vars(args))
-    wandb.run.name = f"{args.exp_type}_{wandb.run.id}"
+    wandb.run.name = f"{args.exp_name}"
 
     trainer = TrainNNPrep(args)
 

@@ -12,9 +12,10 @@ import properties as properties
 
 class ImgDataset(Dataset):
 
-    def __init__(self, data_dir, transform=None, include_name=False):
+    def __init__(self, data_dir, transform=None, include_name=False, include_index=False):
         self.transform = transform
         self.include_name = include_name
+        self.include_index = include_index
         self.files = []
         unprocessed = get_files(data_dir, ['png', 'jpg'])
         for img in unprocessed:
@@ -36,9 +37,11 @@ class ImgDataset(Dataset):
         file_name = os.path.basename(img_name)
         label = file_name.split('_')[1]
         if self.include_name:
-            sample = (image, label, file_name)
+            sample = [image, label, file_name]
         else:
-            sample = (image, label)
+            sample = [image, label]
+        if self.include_index:
+            sample.append(idx)
         return sample
 
     def worker_init(self, pid):
