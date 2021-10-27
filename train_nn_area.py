@@ -49,6 +49,7 @@ class TrainNNPrep():
         self.ckpt_base_path = args.ckpt_base_path
         # self.tensorboard_log_path = args.tb_log_path
         self.jvp_jitter = args.jvp_jitter
+        self.gradient_weighting = args.gradient_weighting
         torch.manual_seed(42)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
@@ -93,6 +94,8 @@ class TrainNNPrep():
             self.validation_set, transform=transform, include_name=True)
 
 
+        if not self.train_subset_size:
+            self.train_subset_size = len(self.dataset)
         rand_indices = torch.randperm(len(self.dataset))[:self.train_subset_size]
         self.train_subset_index_mapping = torch.zeros(len(self.dataset))
         self.train_subset_index_mapping[rand_indices] = torch.arange(0, self.train_subset_size).float()
@@ -101,6 +104,8 @@ class TrainNNPrep():
             self.dataset_subset, batch_size=self.batch_size, shuffle=True, drop_last=True)
 
         
+        if not self.val_subset_size:
+            self.val_subset_size = len(self.validation_set)
         rand_indices = torch.randperm(len(self.validation_set))[:self.val_subset_size]
         validation_set_subset = torch.utils.data.Subset(self.validation_set, rand_indices)
         self.loader_validation = torch.utils.data.DataLoader(
@@ -108,7 +113,7 @@ class TrainNNPrep():
 
         self.train_set_size = len(self.loader_train.dataset)
         self.val_set_size = len(self.loader_validation.dataset)
-        self.sample_importance = torch.zeros(self.train_set_size)
+        self.sample_importance = torch.ones(self.train_set_size)/4.0
         self.lamda = args.history_lamda
 
         self.primary_loss_fn = CTCLoss().to(self.device)
@@ -197,6 +202,7 @@ class TrainNNPrep():
                 indices = self.train_subset_index_mapping[indices].long()
                 if self.minibatch_sample is not None:
                     images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
+                    indices = self.train_subset_index_mapping[sample_indices].long()
                 self.crnn_model.train()
                 self.prep_model.eval()
                 self.prep_model.zero_grad()
@@ -221,8 +227,11 @@ class TrainNNPrep():
                     loss = self.primary_loss_fn(
                         scores, y, pred_size, y_size)
                     temp_loss += loss.item()
-                    loss.backward()
-                    self.sample_importance[indices.cpu()] += self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * temp_loss/self.inner_limit
+                    if self.gradient_weighting:
+                        loss_tensor = loss.repeat(images.shape[0])
+                        loss_tensor.backward(self.sample_importance[indices].cuda())
+                    else:
+                        loss.backward()
                 jvp_loss_temp = 0
                 if self.jvp_jitter and epoch >= self.warmup_epochs:
                     ori_label_index = 0
@@ -255,6 +264,8 @@ class TrainNNPrep():
 
 
                 CRNN_training_loss = temp_loss/self.inner_limit
+                self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss)/4.0
+                self.sampel_importance[torch.isnan(self.sample_importance)] = 0.0001
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
                                   CRNN_training_loss, step)
@@ -273,8 +284,6 @@ class TrainNNPrep():
                 self.optimizer_prep.step()
 
                 training_loss += loss.item()
-                if step % 30 == 0:
-                    self.log_gradients_in_model(self.crnn_model, writer, int(self.train_set_size//self.train_batch_size)*epoch + step)
                 if step % self.iter_interval == 0:
                     print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}, JVP loss: {jvp_loss_temp}")
                 step += 1 
@@ -333,7 +342,7 @@ class TrainNNPrep():
             writer.add_scalar('Validation Loss', val_loss, epoch + 1)
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                        "train_loss": train_loss, "jvp_cer": jvp_cer})
+                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss})
 
             
             save_img(img_preds.cpu(), 'out_' +
@@ -414,14 +423,16 @@ if __name__ == "__main__":
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
                             The function space around the black-box will not be explord.", action="store_true")
-    parser.add_argument('--train_subset_size', default=properties.train_subset_size, help="Subset of training size to use", type=int)
-    parser.add_argument('--val_subset_size', default=properties.val_subset_size,
+    parser.add_argument('--train_subset_size', help="Subset of training size to use", type=int)
+    parser.add_argument('--val_subset_size',
                             help="Subset of val size to use", type=int)
     parser.add_argument('--lr_scheduler',
                             help="Specify scheduler to be used")
     parser.add_argument('--exp_name', default="jvp_jitter",
                             help="Specify name of experiment (JVP Jitter, Sample Dropping Etc.)")
     parser.add_argument('--history_lamda', default=0.1, type=float, 
+                            help="Lamda for maintaining exponential average of sample information")
+    parser.add_argument('--gradient_weighting', action="store_true", 
                             help="Lamda for maintaining exponential average of sample information")
     
     args = parser.parse_args()
