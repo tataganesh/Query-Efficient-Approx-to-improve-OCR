@@ -54,9 +54,10 @@ class TrainNNPrep():
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
         self.start_epoch = args.start_epoch
-        self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
+        self.minibatch_subset = args.minibatch_subset
+        self.minibatch_sample = minibatch_subset_methods.get(self.minibatch_subset, None)
         self.train_batch_size = self.batch_size
-        if args.minibatch_subset_prop and self.minibatch_sample:
+        if args.minibatch_subset_prop and self.minibatch_subset:
             self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
@@ -200,9 +201,13 @@ class TrainNNPrep():
                 self.loader_train = torch.utils.data.DataLoader(self.loader_train.dataset, batch_size=self.batch_size, drop_last=True, sampler=weightedSampler)
             for images, labels, names, indices in self.loader_train:
                 indices = self.train_subset_index_mapping[indices].long()
-                if self.minibatch_sample is not None:
-                    images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
-                    indices = self.train_subset_index_mapping[sample_indices].long()
+                if self.minibatch_subset is not None:
+                    if self.minibatch_subset == "random":
+                        images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
+                        indices = indices[sample_indices]
+                    elif self.minibatch_subset == "importance":
+                        batch_indices = torch.argsort(self.sample_importance[indices], descending=True)[:self.train_batch_size]
+                        images, labels, indices = images[batch_indices], [labels[i] for i in batch_indices], indices[batch_indices]
                 self.crnn_model.train()
                 self.prep_model.eval()
                 self.prep_model.zero_grad()
@@ -265,7 +270,7 @@ class TrainNNPrep():
 
                 CRNN_training_loss = temp_loss/self.inner_limit
                 self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss)/4.0
-                self.sampel_importance[torch.isnan(self.sample_importance)] = 0.0001
+                self.sample_importance[torch.isnan(self.sample_importance)] = 0.0001
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
                                   CRNN_training_loss, step)
@@ -340,9 +345,15 @@ class TrainNNPrep():
             writer.add_scalar('WER and CER/'+self.ocr_name+'_CER',
                               OCR_cer, epoch + 1)
             writer.add_scalar('Validation Loss', val_loss, epoch + 1)
+
+            self.track_importance["File Name"] = [name for image, label, name, indice in self.dataset_subset]
+            self.track_importance["Importance (Loss)"] = self.sample_importance.numpy()
+            self.track_importance.to_csv(os.path.join(self.exp_base_path, "Sample_Data_Importance_loss.csv"))
+            sample_importance_table = wandb.Table(dataframe=self.track_importance)
+
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss})
+                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss, "Sample Importance": sample_importance_table})
 
             
             save_img(img_preds.cpu(), 'out_' +
@@ -367,12 +378,7 @@ class TrainNNPrep():
                        "CRNN_model_" + str(epoch)))
         writer.flush()
         writer.close()
-        # self.dataset_subset[]
-        self.track_importance["File Name"] = [name for image, label, name, indice in self.dataset_subset]
-        self.track_importance["Importance (Loss)"] = self.sample_importance.numpy()
-        self.track_importance.to_csv(os.path.join(self.exp_base_path, "Sample_Data_Importance_loss.csv"))
-        sample_importance_table = wandb.Table(dataframe=self.track_importance)
-        wandb.log({"Sample Importance": sample_importance_table})
+
                 
 
 
@@ -411,11 +417,9 @@ if __name__ == "__main__":
                         default=100, help='Interval for printing iterations per Epoch')
     parser.add_argument('--ckpt_base_path', default=properties.prep_model_path,
                         help='Base path to save model checkpoints. Defaults to properties path')
-    # parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
-    #                     help='Base path to save Tensorboard summaries.') 
     parser.add_argument('--exp_base_path', default=".",
                         help='Base path for experiment. Defaults to current directory')
-    parser.add_argument('--minibatch_subset',  choices=['random'], 
+    parser.add_argument('--minibatch_subset',  choices=['random', 'importance'], 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
