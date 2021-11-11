@@ -57,8 +57,9 @@ class TrainNNPrep():
         self.minibatch_subset = args.minibatch_subset
         self.minibatch_sample = minibatch_subset_methods.get(self.minibatch_subset, None)
         self.train_batch_size = self.batch_size
-        if args.minibatch_subset_prop and self.minibatch_subset:
-            self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
+        self.minibatch_k_decay =  args.minibatch_k_decay
+        # if args.minibatch_k_decay and self.minibatch_subset:
+        #     self.train_batch_size = int(self.train_batch_size * args.minibatch_k_decay)
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
         self.track_importance = pd.DataFrame()
@@ -195,13 +196,10 @@ class TrainNNPrep():
             step = 0
             training_loss = 0
             jvp_loss = 0
-            # Weighted sampling
-            if epoch >= self.warmup_epochs:
-                weightedSampler = torch.utils.data.WeightedRandomSampler(weights=self.sample_importance, num_samples=self.train_set_size) # Need to implement  interface for obtaining samplers
-                self.loader_train = torch.utils.data.DataLoader(self.loader_train.dataset, batch_size=self.batch_size, drop_last=True, sampler=weightedSampler)
             for images, labels, names, indices in self.loader_train:
                 indices = self.train_subset_index_mapping[indices].long()
-                if self.minibatch_subset is not None:
+                if self.minibatch_subset is not None and epoch >= self.warmup_epochs:
+                    self.train_batch_size = int(self.train_batch_size * args.minibatch_k_decay)
                     if self.minibatch_subset == "random":
                         images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
                         indices = indices[sample_indices]
@@ -269,7 +267,7 @@ class TrainNNPrep():
 
 
                 CRNN_training_loss = temp_loss/self.inner_limit
-                self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss)/4.0
+                self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss)/10.0
                 self.sample_importance[torch.isnan(self.sample_importance)] = 0.0001
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
@@ -353,7 +351,7 @@ class TrainNNPrep():
 
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss, "Sample Importance": sample_importance_table})
+                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss, "Sample Importance": sample_importance_table}, "train_batch_size": self.train_batch_size)
 
             
             save_img(img_preds.cpu(), 'out_' +
@@ -421,8 +419,8 @@ if __name__ == "__main__":
                         help='Base path for experiment. Defaults to current directory')
     parser.add_argument('--minibatch_subset',  choices=['random', 'importance'], 
                         help='Specify method to pick subset from minibatch.')
-    parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
-                        help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
+    parser.add_argument('--minibatch_k_decay', default=0.95, type=float,
+                        help='If --minibatch_subset is provided, specify minibatch sample decay (percentage of samples to be used for training). ')
     parser.add_argument('--start_epoch', type=int, default=0,
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
@@ -438,6 +436,8 @@ if __name__ == "__main__":
                             help="Lamda for maintaining exponential average of sample information")
     parser.add_argument('--gradient_weighting', action="store_true", 
                             help="Lamda for maintaining exponential average of sample information")
+    parser.add_argument('--skip_only_bb', action="store_true", 
+                            help="Only skip samples for black box calls and use all samples for training the preprocessor.")
     
     args = parser.parse_args()
     # Conditions on arguments
