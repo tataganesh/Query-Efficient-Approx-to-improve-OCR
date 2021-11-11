@@ -199,7 +199,7 @@ class TrainNNPrep():
             for images, labels, names, indices in self.loader_train:
                 indices = self.train_subset_index_mapping[indices].long()
                 if self.minibatch_subset is not None and epoch >= self.warmup_epochs:
-                    self.train_batch_size = int(self.train_batch_size * args.minibatch_k_decay)
+                    self.train_batch_size = int(self.train_batch_size * self.minibatch_k_decay)
                     if self.minibatch_subset == "random":
                         images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
                         indices = indices[sample_indices]
