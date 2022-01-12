@@ -16,6 +16,11 @@ from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, cre
 from utils import get_text_stack, get_ocr_helper, compare_labels
 from transform_helper import AddGaussianNoice
 import properties as properties
+from pprint import pprint
+import wandb
+wandb.Table.MAX_ROWS = 50000
+wandb.init(project='ocr-calls-reduction', entity='tataganesh')
+
 
 minibatch_subset_methods = {"random": random_subset}
 class TrainNNPrep():
@@ -25,6 +30,7 @@ class TrainNNPrep():
         self.lr_crnn = args.lr_crnn
         self.lr_prep = args.lr_prep
         self.max_epochs = args.epoch
+        self.warmup_epochs = args.warmup_epochs
         self.inner_limit = args.inner_limit
         self.crnn_model_path = args.crnn_model
         self.prep_model_path = args.prep_model
@@ -38,16 +44,21 @@ class TrainNNPrep():
         self.ocr_name = args.ocr
         self.std = args.std
         self.is_random_std = args.random_std
+        self.label_impute = args.label_impute
         torch.manual_seed(42)
 
+        self.model_labels_last = dict() # Seems inefficient
         self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
         self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
         self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
         self.train_batch_prop = 1
+    
         if args.minibatch_subset_prop and self.minibatch_sample:
             self.train_batch_prop = args.minibatch_subset_prop
-
+        
+        self.train_subset_size = args.train_subset_size
+        self.val_subset_size = args.val_subset_size
         self.input_size = properties.input_size
 
         self.ocr = get_ocr_helper(self.ocr_name)
@@ -71,9 +82,9 @@ class TrainNNPrep():
                 self.prep_model_path).to(self.device)
 
         self.dataset = PatchDataset(
-            self.train_set, pad=True, include_name=True)
+            self.train_set, pad=True, include_name=True, num_subset=self.train_subset_size)
         self.validation_set = PatchDataset(
-            self.validation_set, pad=True)
+            self.validation_set, pad=True, num_subset=self.val_subset_size)
         self.loader_train = torch.utils.data.DataLoader(
             self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=PatchDataset.collate)
 
@@ -121,9 +132,9 @@ class TrainNNPrep():
         validation_step = 0
         batch_step = 0
         for epoch in range(self.start_epoch, self.max_epochs):
-            total_samples = 0
             subset_samples = 0
             training_loss = 0
+            epoch_print_flag = True
             for images, labels_dicts, names in self.loader_train:
                 self.crnn_model.train()
                 self.prep_model.eval()
@@ -131,35 +142,69 @@ class TrainNNPrep():
                 self.crnn_model.zero_grad()
 
                 CRNN_training_loss = 0
+                # image_preds = list()
                 for i in range(len(labels_dicts)):
                     image = images[i]
                     labels_dict = labels_dicts[i]
+                    name = names[i]
                     image = image.unsqueeze(0)
                     X_var = image.to(self.device)
-                    pred = self.prep_model(X_var)
-                    pred = pred.detach().cpu()[0]
+                    pred = self.prep_model(X_var)[0]
+                    # image_preds.append(pred)
 
-                    text_crops, labels = get_text_stack(
+                    # pred_cpu = pred.detach().cpu()[0]
+
+                    text_crops_all, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
-                    total_samples += text_crops.shape[0]
                     sample_indices = None
-                    if self.minibatch_sample is not None:
-                        num_samples_subset = int(text_crops.shape[0]*self.train_batch_prop)
+                    # check for number of text crops to be greater than 2, otherwise call black-box for all crops
+                    if self.minibatch_sample and epoch >= self.warmup_epochs and text_crops_all.shape[0] > 2:
+                        num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
                         if num_samples_subset == 0:
                             num_samples_subset = 1
-                        text_crops, labels, sample_indices = self.minibatch_sample(text_crops, labels, num_samples_subset)
-                    subset_samples += text_crops.shape[0]
+                        skipped_text_crops, labels_skipped, sample_indices = self.minibatch_sample(text_crops_all, labels, num_samples_subset)
+                         
+                        ocr_crops_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
+                        ocr_crops_mask[sample_indices] = False
+                        text_crops = text_crops_all[ocr_crops_mask].detach().cpu()
+
+                        if self.label_impute:
+                            model_lab_last_batch = [self.model_labels_last[name + "_" + str(i.item())] for i in sample_indices]
+                            half_labels_skipped = int(num_samples_subset/2)
+                            gt_self_labels = list()
+                            rand_label_indices = torch.randperm(num_samples_subset)
+                            gt_self_labels = [labels_skipped[i] for i in rand_label_indices[:half_labels_skipped]]
+                            gt_self_labels.extend([model_lab_last_batch[i] for i in rand_label_indices[half_labels_skipped:]])
+                            skipped_text_crops = skipped_text_crops[rand_label_indices]
+                            scores, y, pred_size, y_size = self._call_model(
+                                skipped_text_crops, gt_self_labels)
+                        
+                            loss = self.primary_loss_fn(scores, y, pred_size, y_size)
+                            loss.backward()
+                            if epoch_print_flag:
+                                pprint(list(zip([model_lab_last_batch[i] for i in rand_label_indices], [labels_skipped[i] for i in rand_label_indices], gt_self_labels)))
+                                print(f"Skipped Samples - {skipped_text_crops.shape[0]}")
+                                epoch_print_flag = False
+                    else:
+                        text_crops = text_crops_all.detach().cpu()
+                    
                     temp_loss = 0
-                    for i in range(self.inner_limit):
-                        self.prep_model.zero_grad()
-                        noisy_imgs = self.add_noise(text_crops, noiser)
-                        noisy_labels = self.ocr.get_labels(noisy_imgs)
-                        scores, y, pred_size, y_size = self._call_model(
-                            noisy_imgs, noisy_labels)
-                        loss = self.primary_loss_fn(
-                            scores, y, pred_size, y_size)
-                        temp_loss += loss.item()
-                        loss.backward()
+                    if epoch_print_flag:
+                        print(f"Total Samples - {text_crops_all.shape[0]}")
+                        print(f"OCR Samples - {text_crops.shape[0]}")
+                        epoch_print_flag = False
+
+                    if text_crops.shape[0] > 0: # Cases when the black-box should not be called at all (in a mini-batch)
+                        for i in range(self.inner_limit):
+                            self.prep_model.zero_grad()
+                            noisy_imgs = self.add_noise(text_crops, noiser)
+                            noisy_labels = self.ocr.get_labels(noisy_imgs)
+                            scores, y, pred_size, y_size = self._call_model(
+                                noisy_imgs, noisy_labels)
+                            loss = self.primary_loss_fn(
+                                scores, y, pred_size, y_size)
+                            temp_loss += loss.item()
+                            loss.backward()
                     CRNN_training_loss += temp_loss/self.inner_limit
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
@@ -175,16 +220,19 @@ class TrainNNPrep():
                 for i in range(len(labels_dicts)):
                     image = images[i]
                     labels_dict = labels_dicts[i]
+                    name = names[i]
                     image = image.unsqueeze(0)
                     X_var = image.to(self.device)
                     img_out = self.prep_model(X_var)[0]
+                    # img_out = image_preds[i]
                     n_text_crops, labels = get_text_stack(
                         img_out, labels_dict, self.input_size)
-                    total_samples += n_text_crops.shape[0]
-                    if self.minibatch_sample is not None:
-                        n_text_crops = n_text_crops[sample_indices]
-                        labels = [labels[i] for i in sample_indices]
-                    subset_samples += n_text_crops.shape[0]
+                    # total_samples += n_text_crops.shape[0]
+                    # if self.minibatch_sample is not None:
+                    #     n_text_crops = n_text_crops[sample_indices]
+                    #     labels = [labels[i] for i in sample_indices]
+                    # subset_samples += n_text_crops.shape[0]
+                    # print(f"Preprocessor Samples - {n_text_crops.shape[0]}")
 
                     scores, y, pred_size, y_size = self._call_model(
                         n_text_crops, labels)
@@ -192,6 +240,11 @@ class TrainNNPrep():
                     loss = self._get_loss(
                         scores, y, pred_size, y_size, img_out)
                     loss.backward()
+                    # Update last seen prediction of image
+                    model_gen_labels = pred_to_string(scores, labels, self.index_to_char)
+
+                    for i in range(len(labels)):
+                        self.model_labels_last[name + "_" + str(i)] = model_gen_labels[i]
 
                     training_loss += loss.item()
                     if step % 100 == 0:
@@ -199,6 +252,7 @@ class TrainNNPrep():
                     step += 1
                 self.optimizer_prep.step()
 
+            train_loss =  training_loss / self.train_set_size
             writer.add_scalar('Training Loss', training_loss /
                               self.train_set_size, epoch + 1)
             self.prep_model.eval()
@@ -206,6 +260,8 @@ class TrainNNPrep():
             pred_correct_count = 0
             validation_loss = 0
             tess_correct_count = 0
+            pred_CER = 0
+            tess_CER = 0
             label_count = 0
             with torch.no_grad():
                 for image, labels_dict in self.validation_set:
@@ -223,18 +279,31 @@ class TrainNNPrep():
 
                     preds = pred_to_string(scores, labels, self.index_to_char)
                     ocr_labels = self.ocr.get_labels(n_text_crops.cpu())
-                    crt, _ = compare_labels(preds, labels)
-                    tess_crt, _ = compare_labels(ocr_labels, labels)
+                    crt, cer = compare_labels(preds, labels)
+                    tess_crt, tess_cer = compare_labels(ocr_labels, labels)
                     pred_correct_count += crt
                     tess_correct_count += tess_crt
                     label_count += len(labels)
+                    pred_CER += cer
+                    tess_CER += tess_cer
                     validation_step += 1
+
+            CRNN_accuracy = pred_correct_count/label_count
+            OCR_accuracy = tess_correct_count/label_count
+            CRNN_cer = pred_CER/self.val_set_size
+            OCR_cer = tess_CER/self.val_set_size
+            val_loss = validation_loss / self.val_set_size
+
             writer.add_scalar('Accuracy/CRNN_output',
                               pred_correct_count/label_count, epoch + 1)
             writer.add_scalar('Accuracy/'+self.ocr_name+'_output',
                               tess_correct_count/label_count, epoch + 1)
             writer.add_scalar('Validation Loss',
                               validation_loss/self.val_set_size, epoch + 1)
+
+            wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
+                    "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
+                    "train_loss": train_loss, "val_loss": val_loss})
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
             # img.save(properties.img_out_path+'out_'+str(epoch)+'.png', 'PNG')
@@ -249,8 +318,8 @@ class TrainNNPrep():
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1), self.max_epochs,
                                                                                training_loss / self.train_set_size,
                                                                                validation_loss/self.val_set_size))
-            print("Epoch: %d/%d => Total Training Samples: %f | Subset Training Samples: %f | Train size: %f" % ((epoch + 1), self.max_epochs,
-                                                                                    total_samples, subset_samples, self.train_set_size))
+            # print("Epoch: %d/%d => Total Training Samples: %f | Subset Training Samples: %f | Train size: %f" % ((epoch + 1), self.max_epochs,
+            #                                                                         total_samples, subset_samples, self.train_set_size))
             torch.save(self.prep_model,
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
@@ -295,9 +364,21 @@ if __name__ == "__main__":
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     parser.add_argument('--data_base_path',
                         help='Base path training, validation and test data', default=".")
+    parser.add_argument('--warmup_epochs', type=int,
+                        default=1, help='number of warmup epochs')
+    parser.add_argument('--exp_name', default="test_patch",
+                        help="Specify name of experiment (JVP Jitter, Sample Dropping Etc.)")
+    parser.add_argument('--exp_id',
+                        help="Specify unique experiment ID")
+    parser.add_argument('--train_subset_size', help="Subset of training size to use", type=int)
+    parser.add_argument('--val_subset_size',
+                            help="Subset of val size to use", type=int)
+    parser.add_argument('--label_impute',
+                            help="Impute black-box labels for approximator training", action="store_true")
     args = parser.parse_args()
     print(args)
-
+    wandb.config.update(vars(args))
+    wandb.run.name = f"{args.exp_name}"
     trainer = TrainNNPrep(args)
 
     start = datetime.datetime.now()

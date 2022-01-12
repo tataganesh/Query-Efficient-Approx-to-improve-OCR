@@ -13,10 +13,12 @@ import properties as properties
 
 class PatchDataset(Dataset):
 
-    def __init__(self, data_dir, pad=False, include_name=False):
+    def __init__(self, data_dir, pad=False, include_name=False, num_subset=None):
         self.pad = pad
         self.include_name = include_name
         self.files = get_files(data_dir, ['png', 'jpg'])
+        if num_subset:
+            self.files = random.sample(self.files, num_subset)
         self.size = (400, 512)
 
     def __len__(self):
