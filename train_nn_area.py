@@ -17,6 +17,7 @@ from utils import random_subset
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
 import wandb
+wandb.Table.MAX_ROWS = 50000
 import csv
 import pandas as pd
 wandb.init(project='ocr-calls-reduction', entity='tataganesh')
@@ -58,8 +59,8 @@ class TrainNNPrep():
         self.minibatch_sample = minibatch_subset_methods.get(self.minibatch_subset, None)
         self.train_batch_size = self.batch_size
         self.minibatch_k_decay =  args.minibatch_k_decay
-        # if args.minibatch_k_decay and self.minibatch_subset:
-        #     self.train_batch_size = int(self.train_batch_size * args.minibatch_k_decay)
+        if args.minibatch_subset_prop and self.minibatch_subset and not self.minibatch_k_decay:
+            self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
         self.track_importance = pd.DataFrame()
@@ -115,10 +116,12 @@ class TrainNNPrep():
 
         self.train_set_size = len(self.loader_train.dataset)
         self.val_set_size = len(self.loader_validation.dataset)
-        self.sample_importance = torch.ones(self.train_set_size)/4.0
+        self.sample_importance = torch.ones(self.train_set_size)/10.0
+        self.sample_frequency = torch.zeros((self.train_set_size, self.max_epochs, 2))
         self.lamda = args.history_lamda
 
         self.primary_loss_fn = CTCLoss().to(self.device)
+        self.primary_loss_fn_sample_wise = CTCLoss(reduction='none').to(self.device)
         self.secondary_loss_fn = MSELoss().to(self.device)
         self.optimizer_crnn = optim.Adam(
             self.crnn_model.parameters(), lr=self.lr_crnn, weight_decay=0)
@@ -196,25 +199,27 @@ class TrainNNPrep():
             step = 0
             training_loss = 0
             jvp_loss = 0
+            if self.minibatch_k_decay and epoch >= self.warmup_epochs:
+                self.train_batch_size = int(self.train_batch_size * self.minibatch_k_decay)
             for images, labels, names, indices in self.loader_train:
                 indices = self.train_subset_index_mapping[indices].long()
-                if self.minibatch_subset is not None and epoch >= self.warmup_epochs:
-                    self.train_batch_size = int(self.train_batch_size * self.minibatch_k_decay)
+                if self.minibatch_subset and epoch >= self.warmup_epochs:
                     if self.minibatch_subset == "random":
                         images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
                         indices = indices[sample_indices]
                     elif self.minibatch_subset == "importance":
                         batch_indices = torch.argsort(self.sample_importance[indices], descending=True)[:self.train_batch_size]
                         images, labels, indices = images[batch_indices], [labels[i] for i in batch_indices], indices[batch_indices]
+                self.sample_frequency[indices, epoch, 0] = 1
                 self.crnn_model.train()
                 self.prep_model.eval()
                 self.prep_model.zero_grad()
                 self.crnn_model.zero_grad()
-
                 X_var = images.to(self.device)
                 img_preds = self.prep_model(X_var)
                 img_preds = img_preds.detach().cpu()
                 temp_loss = 0
+                crnn_train_loss = torch.zeros(indices.shape[0])
                 noisy_imgs_list = list()
                 noisy_labels_list = list()
                 jitter_noise_list = list()
@@ -229,7 +234,9 @@ class TrainNNPrep():
                         noisy_imgs, noisy_labels)
                     loss = self.primary_loss_fn(
                         scores, y, pred_size, y_size)
+                    loss_inv = self.primary_loss_fn_sample_wise(scores, y, pred_size, y_size)
                     temp_loss += loss.item()
+                    crnn_train_loss += loss_inv
                     if self.gradient_weighting:
                         loss_tensor = loss.repeat(images.shape[0])
                         loss_tensor.backward(self.sample_importance[indices].cuda())
@@ -267,8 +274,10 @@ class TrainNNPrep():
 
 
                 CRNN_training_loss = temp_loss/self.inner_limit
-                self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss)/10.0
+                CRNN_training_loss_per_sample = crnn_train_loss/self.inner_limit
+                self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss_per_sample)/10.0
                 self.sample_importance[torch.isnan(self.sample_importance)] = 0.0001
+                self.sample_frequency[indices, epoch, 1] = self.sample_importance[indices.cpu()]
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
                                   CRNN_training_loss, step)
@@ -348,10 +357,11 @@ class TrainNNPrep():
             self.track_importance["Importance (Loss)"] = self.sample_importance.numpy()
             self.track_importance.to_csv(os.path.join(self.exp_base_path, "Sample_Data_Importance_loss.csv"))
             sample_importance_table = wandb.Table(dataframe=self.track_importance)
+            torch.save(self.sample_frequency, os.path.join(self.exp_base_path, "Sample_Frequency.pt"))
 
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss, "Sample Importance": sample_importance_table}, "train_batch_size": self.train_batch_size)
+                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss, "Sample Importance": sample_importance_table, "train_batch_size": self.train_batch_size})
 
             
             save_img(img_preds.cpu(), 'out_' +
@@ -419,8 +429,10 @@ if __name__ == "__main__":
                         help='Base path for experiment. Defaults to current directory')
     parser.add_argument('--minibatch_subset',  choices=['random', 'importance'], 
                         help='Specify method to pick subset from minibatch.')
-    parser.add_argument('--minibatch_k_decay', default=0.95, type=float,
+    parser.add_argument('--minibatch_k_decay', type=float,
                         help='If --minibatch_subset is provided, specify minibatch sample decay (percentage of samples to be used for training). ')
+    parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
+                        help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
     parser.add_argument('--start_epoch', type=int, default=0,
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
     parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
