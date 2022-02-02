@@ -20,6 +20,7 @@ import wandb
 wandb.Table.MAX_ROWS = 50000
 import csv
 import pandas as pd
+from pprint import pprint
 wandb.init(project='ocr-calls-reduction', entity='tataganesh')
 
 minibatch_subset_methods = {"random": random_subset}
@@ -60,10 +61,11 @@ class TrainNNPrep():
         self.train_batch_size = self.batch_size
         self.minibatch_k_decay =  args.minibatch_k_decay
         if args.minibatch_subset_prop and self.minibatch_subset and not self.minibatch_k_decay:
-            self.train_batch_size = int(self.train_batch_size * args.minibatch_subset_prop)
+            self.num_samples_skipped = int(self.train_batch_size * args.minibatch_subset_prop)
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
         self.track_importance = pd.DataFrame()
+        # self.model_preds_last = torch.zeros((self.train_subset_size, 50))
         
         self.input_size = properties.input_size
 
@@ -99,6 +101,7 @@ class TrainNNPrep():
 
         if not self.train_subset_size:
             self.train_subset_size = len(self.dataset)
+        self.model_labels_last = ["" for _ in range(0, self.train_subset_size)]
         rand_indices = torch.randperm(len(self.dataset))[:self.train_subset_size]
         self.train_subset_index_mapping = torch.zeros(len(self.dataset))
         self.train_subset_index_mapping[rand_indices] = torch.arange(0, self.train_subset_size).float()
@@ -132,7 +135,6 @@ class TrainNNPrep():
         if self.lr_scheduler == "cosine":
             self.scheduler_crnn = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_crnn, T_max=self.max_epochs)
             self.scheduler_prep = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_prep, T_max=self.max_epochs)
-
 
     def _call_model(self, images, labels):
         X_var = images.to(self.device)
@@ -202,27 +204,57 @@ class TrainNNPrep():
             if self.minibatch_k_decay and epoch >= self.warmup_epochs:
                 self.train_batch_size = int(self.train_batch_size * self.minibatch_k_decay)
             for images, labels, names, indices in self.loader_train:
-                indices = self.train_subset_index_mapping[indices].long()
-                if self.minibatch_subset and epoch >= self.warmup_epochs:
-                    if self.minibatch_subset == "random":
-                        images, labels, sample_indices = self.minibatch_sample(images, labels, self.train_batch_size)
-                        indices = indices[sample_indices]
-                    elif self.minibatch_subset == "importance":
-                        batch_indices = torch.argsort(self.sample_importance[indices], descending=True)[:self.train_batch_size]
-                        images, labels, indices = images[batch_indices], [labels[i] for i in batch_indices], indices[batch_indices]
-                self.sample_frequency[indices, epoch, 0] = 1
+                # self.sample_frequency[indices, epoch, 0] = 1
                 self.crnn_model.train()
                 self.prep_model.eval()
                 self.prep_model.zero_grad()
                 self.crnn_model.zero_grad()
                 X_var = images.to(self.device)
-                img_preds = self.prep_model(X_var)
-                img_preds = img_preds.detach().cpu()
+                img_preds_all = self.prep_model(X_var)
                 temp_loss = 0
-                crnn_train_loss = torch.zeros(indices.shape[0])
                 noisy_imgs_list = list()
                 noisy_labels_list = list()
                 jitter_noise_list = list()
+                indices_all = self.train_subset_index_mapping[indices].long()
+                if self.minibatch_subset and epoch >= self.warmup_epochs:
+                    if self.minibatch_subset == "random":
+                        images_skipped, labels_skipped, sample_indices = self.minibatch_sample(images, labels, self.num_samples_skipped)
+                        batch_indices_skipped = sample_indices
+                        indices_skipped = indices_all[sample_indices]
+                    elif self.minibatch_subset == "importance":
+                        batch_indices = torch.argsort(self.sample_importance[indices], descending=True)[:self.num_samples_skipped]
+                        images_skipped, labels_skipped, batch_indices_skipped = images[batch_indices], [labels[i] for i in batch_indices], batch_indices
+                        indices_skipped = indices_all[batch_indices]
+                    img_preds_skipped = img_preds_all[batch_indices_skipped]
+                    labels_skipped = [labels[l] for l in batch_indices_skipped]
+                    model_labels_last = [self.model_labels_last[i] for i in indices_skipped]
+                    orig_indices_mask = torch.ones(indices.shape[0], dtype=bool)
+                    orig_indices_mask[batch_indices_skipped] = False
+                    indices = indices_all[orig_indices_mask].long()
+                    img_preds = img_preds_all[orig_indices_mask].detach().cpu() 
+                    # Combine GT and prev model predictions
+                    half_labels_skipped = int(self.num_samples_skipped/2)
+                    gt_self_labels = list()
+                    rand_label_indices = torch.randperm(self.num_samples_skipped)
+                    gt_self_labels = [labels_skipped[i] for i in rand_label_indices[:half_labels_skipped]]
+                    gt_self_labels.extend([model_labels_last[i] for i in rand_label_indices[half_labels_skipped:]])
+                    img_preds_skipped = img_preds_skipped[rand_label_indices]
+                    pprint(list(zip([model_labels_last[i] for i in rand_label_indices], [labels_skipped[i] for i in rand_label_indices], gt_self_labels)))
+                    scores, y, pred_size, y_size = self._call_model(
+                        img_preds_skipped, gt_self_labels)
+                    
+                    loss = self.primary_loss_fn(scores, y, pred_size, y_size)
+                    loss.backward()
+                    print(f"Skipped Samples - {img_preds_skipped.shape[0]}")
+                else:
+                    img_preds = img_preds_all.detach().cpu() 
+                    indices = indices_all
+                    
+                    # Compute Loss
+                    # primary_loss_fn_sample_wise(scores, y, pred_size, y_size)
+                print(f"OCR Samples - {img_preds.shape[0]}")
+                # crnn_train_loss = torch.zeros(indices.shape[0])
+
                 for i in range(self.inner_limit):
                     self.prep_model.zero_grad()
                     noisy_imgs, added_noise = self.add_noise(img_preds, noiser, noise_coef=-1)
@@ -236,7 +268,7 @@ class TrainNNPrep():
                         scores, y, pred_size, y_size)
                     loss_inv = self.primary_loss_fn_sample_wise(scores, y, pred_size, y_size)
                     temp_loss += loss.item()
-                    crnn_train_loss += loss_inv
+                    # crnn_train_loss[indices] += loss_inv.cpu()
                     if self.gradient_weighting:
                         loss_tensor = loss.repeat(images.shape[0])
                         loss_tensor.backward(self.sample_importance[indices].cuda())
@@ -267,17 +299,17 @@ class TrainNNPrep():
                             jvp_loss_temp += loss.item()
                             jvp_loss += jvp_loss_temp / self.inner_limit
 
-                            preds = pred_to_string(shifted_scores, labels, self.index_to_char)
+                            # preds = pred_to_string(shifted_scores, labels, self.index_to_char)
                             # loss.backward()
                             crt, cer = compare_labels(preds, noisy_labels)
                             jvp_train_cer += cer
 
 
                 CRNN_training_loss = temp_loss/self.inner_limit
-                CRNN_training_loss_per_sample = crnn_train_loss/self.inner_limit
-                self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss_per_sample)/10.0
+                # CRNN_training_loss_per_sample = crnn_train_loss/self.inner_limit
+                # self.sample_importance[indices.cpu()] += (self.lamda * self.sample_importance[indices.cpu()] + (1 - self.lamda) * CRNN_training_loss_per_sample)/10.0
                 self.sample_importance[torch.isnan(self.sample_importance)] = 0.0001
-                self.sample_frequency[indices, epoch, 1] = self.sample_importance[indices.cpu()]
+                # self.sample_frequency[indices, epoch, 1] = self.sample_importance[indices.cpu()]
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
                                   CRNN_training_loss, step)
@@ -294,6 +326,16 @@ class TrainNNPrep():
                 loss = self._get_loss(scores, y, pred_size, y_size, img_preds)
                 loss.backward()
                 self.optimizer_prep.step()
+
+                print(f"Preprocessor total samples - {img_preds.shape[0]}")
+
+                # Update last seen prediction of image
+                model_gen_labels = pred_to_string(scores, labels, self.index_to_char)
+                # conc_label = ''.join(model_gen_labels)
+                # y_indices = torch.tensor([[self.char_to_index[c] for c in label] for label in  model_gen_labels])
+                # self.model_preds_last[indices] = y_indices
+                for i, index in enumerate(indices_all):
+                    self.model_labels_last[index.item()] = model_gen_labels[i]
 
                 training_loss += loss.item()
                 if step % self.iter_interval == 0:
@@ -354,10 +396,10 @@ class TrainNNPrep():
             writer.add_scalar('Validation Loss', val_loss, epoch + 1)
 
             self.track_importance["File Name"] = [name for image, label, name, indice in self.dataset_subset]
-            self.track_importance["Importance (Loss)"] = self.sample_importance.numpy()
+            self.track_importance["Importance (Loss)"] = self.sample_importance.detach().numpy()
             self.track_importance.to_csv(os.path.join(self.exp_base_path, "Sample_Data_Importance_loss.csv"))
             sample_importance_table = wandb.Table(dataframe=self.track_importance)
-            torch.save(self.sample_frequency, os.path.join(self.exp_base_path, "Sample_Frequency.pt"))
+            # torch.save(self.sample_frequency, os.path.join(self.exp_base_path, "Sample_Frequency.pt"))
 
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
