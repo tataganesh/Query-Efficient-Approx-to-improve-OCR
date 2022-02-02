@@ -29,6 +29,7 @@ class TrainNNPrep():
         self.batch_size = 1
         self.lr_crnn = args.lr_crnn
         self.lr_prep = args.lr_prep
+        self.weight_decay = args.weight_decay
         self.max_epochs = args.epoch
         self.warmup_epochs = args.warmup_epochs
         self.inner_limit = args.inner_limit
@@ -93,11 +94,13 @@ class TrainNNPrep():
             
 
         self.primary_loss_fn = CTCLoss().to(self.device)
+        self.primary_loss_fn_sample_wise = CTCLoss(reduction='none').to(self.device)
+
         self.secondary_loss_fn = MSELoss().to(self.device)
         self.optimizer_crnn = optim.Adam(
-            self.crnn_model.parameters(), lr=self.lr_crnn, weight_decay=0)
+            self.crnn_model.parameters(), lr=self.lr_crnn, weight_decay=self.weight_decay)
         self.optimizer_prep = optim.Adam(
-            self.prep_model.parameters(), lr=self.lr_prep, weight_decay=0)
+            self.prep_model.parameters(), lr=self.lr_prep, weight_decay=self.weight_decay)
 
     def _call_model(self, images, labels):
         X_var = images.to(self.device)
@@ -180,6 +183,8 @@ class TrainNNPrep():
                                 skipped_text_crops, gt_self_labels)
                         
                             loss = self.primary_loss_fn(scores, y, pred_size, y_size)
+                            loss_inv = self.primary_loss_fn_sample_wise(scores, y, pred_size, y_size)
+                            
                             loss.backward()
                             if epoch_print_flag:
                                 pprint(list(zip([model_lab_last_batch[i] for i in rand_label_indices], [labels_skipped[i] for i in rand_label_indices], gt_self_labels)))
@@ -375,6 +380,8 @@ if __name__ == "__main__":
                             help="Subset of val size to use", type=int)
     parser.add_argument('--label_impute',
                             help="Impute black-box labels for approximator training", action="store_true")
+    parser.add_argument('--weight_decay',
+                            help="Weight Decay for the optimizer", type=float, default=5e-4)
     args = parser.parse_args()
     print(args)
     wandb.config.update(vars(args))

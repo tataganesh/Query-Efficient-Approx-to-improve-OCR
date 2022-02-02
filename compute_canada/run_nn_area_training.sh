@@ -2,10 +2,10 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=6  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=15:00:00     # DD-HH:MM:SS
+#SBATCH --time=20:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/%j.out
 
-EXP_NUM=56
+EXP_NUM=63
 echo "Running Experiment $EXP_NUM"
 
 module load StdEnv/2020 tesseract/4.1.0
@@ -26,7 +26,7 @@ else
 fi
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 BATCH_SIZE=64
-EPOCH=30
+EPOCH=50
 EXP_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/"
 CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_8/crnn_warmup/crnn_model_29"
 TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
@@ -34,4 +34,4 @@ CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
 mkdir -p $TB_LOGS_PATH $CKPT_BASE_PATH
 # tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
 echo "Running training script"
-python -u train_nn_area.py --batch_size $BATCH_SIZE --epoch $EPOCH  --ckpt_base_path $CKPT_BASE_PATH --exp_base_path $EXP_BASE_PATH --crnn_model  $CRNN_MODEL_PATH --data_base_path $SLURM_TMPDIR # --exp_name minibatch_random_inputation --warmup_epochs 4  --train_subset_size 500 --val_subset_size 100
+python -u train_nn_area.py --batch_size $BATCH_SIZE --epoch $EPOCH --exp_base_path $EXP_BASE_PATH --crnn_model  $CRNN_MODEL_PATH --data_base_path $SLURM_TMPDIR --exp_name patch_50_impute --warmup_epochs 4 --minibatch_subset random --minibatch_subset_prop 0.5 --label_impute
