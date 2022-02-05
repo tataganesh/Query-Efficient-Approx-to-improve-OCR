@@ -134,10 +134,14 @@ class TrainNNPrep():
         step = 0
         validation_step = 0
         batch_step = 0
+        total_bb_calls = 0
+
         for epoch in range(self.start_epoch, self.max_epochs):
             subset_samples = 0
             training_loss = 0
             epoch_print_flag = True
+            epoch_bb_calls = 0
+            # epoch_prop = 
             for images, labels_dicts, names in self.loader_train:
                 self.crnn_model.train()
                 self.prep_model.eval()
@@ -160,6 +164,7 @@ class TrainNNPrep():
                     text_crops_all, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
                     sample_indices = None
+
                     # check for number of text crops to be greater than 2, otherwise call black-box for all crops
                     if self.minibatch_sample and epoch >= self.warmup_epochs and text_crops_all.shape[0] > 2:
                         num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
@@ -198,7 +203,8 @@ class TrainNNPrep():
                         print(f"Total Samples - {text_crops_all.shape[0]}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
                         epoch_print_flag = False
-
+                    total_bb_calls += text_crops.shape[0]
+                    epoch_bb_calls += text_crops.shape[0]
                     if text_crops.shape[0] > 0: # Cases when the black-box should not be called at all (in a mini-batch)
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
@@ -308,7 +314,7 @@ class TrainNNPrep():
 
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                     "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                    "train_loss": train_loss, "val_loss": val_loss})
+                    "train_loss": train_loss, "val_loss": val_loss, "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls})
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
             # img.save(properties.img_out_path+'out_'+str(epoch)+'.png', 'PNG')
