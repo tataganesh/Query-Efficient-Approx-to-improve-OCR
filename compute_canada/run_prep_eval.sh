@@ -37,8 +37,8 @@ cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 # cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 # [ ! -f "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/Prep_model_4" ] && echo "File not found!" 
-for i in 44
+for i in 49
 do
     echo "Running $i preprocessor"
-    python -u eval_prep.py --prep_path "/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_57/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_68/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
 done
