@@ -74,31 +74,36 @@ class TrainCRNN():
             PadWhite(self.input_size),
             transforms.ToTensor(),
         ])
-        if self.ocr is not None:
-            noisy_transform = transforms.Compose([
+        noisy_transform = transforms.Compose([
                 PadWhite(self.input_size),
                 transforms.ToTensor(),
                 AddGaussianNoice(
                     std=self.std, is_stochastic=self.is_random_std, return_noise=False)
             ])
-
+        if self.ocr is not None:
             dataset = OCRDataset(
                 self.train_set, transform=noisy_transform, ocr_helper=self.ocr)
-            rand_indices = torch.randperm(len(dataset))[:properties.train_subset_size]
-            dataset_subset = torch.utils.data.Subset(dataset, rand_indices)
-            self.loader_train = torch.utils.data.DataLoader(
-                dataset_subset, batch_size=self.batch_size, drop_last=True, shuffle=True)
-
+                
             validation_set = OCRDataset(
-                self.validation_set, transform=transform, ocr_helper=self.ocr)
-            
-            rand_indices = torch.randperm(len(validation_set))[:properties.val_subset_size]
-            validation_set_subset = torch.utils.data.Subset(validation_set, rand_indices)
-            self.loader_validation = torch.utils.data.DataLoader(
-                validation_set_subset, batch_size=self.batch_size, drop_last=True)
+            self.validation_set, transform=transform, ocr_helper=self.ocr)
+        else:
+            dataset = ImgDataset(
+                self.train_set, transform=noisy_transform)
+            validation_set = ImgDataset(
+            self.validation_set, transform=transform)
+        rand_indices = torch.randperm(len(dataset))#[:properties.train_subset_size]
+        dataset_subset = torch.utils.data.Subset(dataset, rand_indices)
+        self.loader_train = torch.utils.data.DataLoader(
+            dataset_subset, batch_size=self.batch_size, drop_last=True, shuffle=True)
+        
+        rand_indices = torch.randperm(len(validation_set))# [:properties.val_subset_size]
+        validation_set_subset = torch.utils.data.Subset(validation_set, rand_indices)
+        self.loader_validation = torch.utils.data.DataLoader(
+            validation_set_subset, batch_size=self.batch_size, drop_last=True)
 
         self.train_set_size = len(self.loader_train.dataset)
         self.val_set_size = len(self.loader_validation.dataset)
+        print(f"Train Set size - {self.train_set_size}, Val Set Size - {self.val_set_size}")
 
         self.loss_function = CTCLoss().to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
@@ -179,7 +184,7 @@ if __name__ == "__main__":
                         default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--random_seed', type=int,
                         default=42, help='random seed for shuffles')
-    parser.add_argument('--ocr', default="Tesseract",
+    parser.add_argument('--ocr',
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--dataset', default='pos',
                         help="performs training with given dataset [pos, vgg]")

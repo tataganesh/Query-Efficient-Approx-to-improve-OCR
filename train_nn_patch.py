@@ -69,7 +69,7 @@ class TrainNNPrep():
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
 
-        if self.crnn_model_path == '':
+        if self.crnn_model_path is None:
             self.crnn_model = CRNN(self.vocab_size, False).to(self.device)
         else:
             self.crnn_model = torch.load(
@@ -134,10 +134,14 @@ class TrainNNPrep():
         step = 0
         validation_step = 0
         batch_step = 0
+        total_bb_calls = 0
+
         for epoch in range(self.start_epoch, self.max_epochs):
             subset_samples = 0
             training_loss = 0
             epoch_print_flag = True
+            epoch_bb_calls = 0
+            # epoch_prop = 
             for images, labels_dicts, names in self.loader_train:
                 self.crnn_model.train()
                 self.prep_model.eval()
@@ -160,6 +164,7 @@ class TrainNNPrep():
                     text_crops_all, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
                     sample_indices = None
+
                     # check for number of text crops to be greater than 2, otherwise call black-box for all crops
                     if self.minibatch_sample and epoch >= self.warmup_epochs and text_crops_all.shape[0] > 2:
                         num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
@@ -198,8 +203,7 @@ class TrainNNPrep():
                         print(f"Total Samples - {text_crops_all.shape[0]}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
                         epoch_print_flag = False
-
-                    if text_crops.shape[0] > 0: # Cases when the black-box should not be called at all (in a mini-batch)
+                    if text_crops.shape[0] > 0 and  int(self.train_batch_prop)!=1: # Cases when the black-box should not be called at all (in a mini-batch)
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
                             noisy_imgs = self.add_noise(text_crops, noiser)
@@ -210,6 +214,9 @@ class TrainNNPrep():
                                 scores, y, pred_size, y_size)
                             temp_loss += loss.item()
                             loss.backward()
+                        total_bb_calls += text_crops.shape[0]
+                        epoch_bb_calls += text_crops.shape[0]
+ 
                     CRNN_training_loss += temp_loss/self.inner_limit
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
@@ -255,6 +262,7 @@ class TrainNNPrep():
                     if step % 100 == 0:
                         print("Iteration: %d => %f" % (step, loss.item()))
                     step += 1
+                # self.optimizer_crnn.step()
                 self.optimizer_prep.step()
 
             train_loss =  training_loss / self.train_set_size
@@ -308,7 +316,7 @@ class TrainNNPrep():
 
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                     "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                    "train_loss": train_loss, "val_loss": val_loss})
+                    "train_loss": train_loss, "val_loss": val_loss, "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls})
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
             # img.save(properties.img_out_path+'out_'+str(epoch)+'.png', 'PNG')
@@ -349,7 +357,7 @@ if __name__ == "__main__":
                         default=2, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
                         default=5, help='number of inner loop iterations')
-    parser.add_argument('--crnn_model', default=properties.crnn_model_path,
+    parser.add_argument('--crnn_model',
                         help="specify non-default CRNN model location. If given empty, a new CRNN model will be used")
     parser.add_argument('--prep_model',
                         help="specify non-default Prep model location. By default, a new Prep model will be used")
