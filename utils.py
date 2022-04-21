@@ -93,7 +93,7 @@ def compare_labels(preds, labels):
         if preds[i] == labels[i]:
             correct_count += 1
         distance = Levenshtein.distance(labels[i], preds[i])
-        total_cer += distance/len(labels[i])
+        total_cer += distance/max(1, len(labels[i])) # Handle cases where labels[i] is empty
     return correct_count, total_cer
 
 

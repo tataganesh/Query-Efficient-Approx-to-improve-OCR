@@ -3,8 +3,6 @@ source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 
 EXP_ID=63
-DATA_PATH="$SLURM_TMPDIR/data"
-DATASET_NAME="vgg"
 # if [ ! -d $DATA_PATH ]
 # then
 #     echo "$DATASET_NAME Dataset extraction started"

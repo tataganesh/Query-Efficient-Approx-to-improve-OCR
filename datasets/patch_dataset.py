@@ -59,7 +59,7 @@ class PatchDataset(Dataset):
         # print(label_list)
         f.close()
         label_list_out = []
-        for text_area in label_list:
+        for i, text_area in enumerate(label_list):
             label = text_area['label']
             if len(label_list) != 0 and 'x1' in label_list[0]:
                 y1 = text_area['y1'] + top_padding
@@ -88,12 +88,12 @@ class PatchDataset(Dataset):
 
             if len(label) <= properties.max_char_len and x_max - x_min < 128 and y_max - y_min < 32:
                 out = {'label': label, 'y1': y1, 'y2': y2, 'y3': y3, 'y4': y4, 'x1': x1, 'x2': x2,
-                       'x3': x3, 'x4': x4, 'x_min': x_min, 'y_min': y_min, 'x_max': x_max, 'y_max': y_max}
+                       'x3': x3, 'x4': x4, 'x_min': x_min, 'y_min': y_min, 'x_max': x_max, 'y_max': y_max, "index": i}
                 label_list_out.append(out)
 
         if len(label_list_out) == 0:
             label_list_out.append(
-                {'label': ' ', 'x_min': 0, 'y_min': 0, 'x_max': 127, 'y_max': 31})
+                {'label': ' ', 'x_min': 0, 'y_min': 0, 'x_max': 127, 'y_max': 31, "index": 0})
         # print(label_list_out)
         return label_list_out
 

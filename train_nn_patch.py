@@ -2,10 +2,13 @@ import datetime
 import torch
 import argparse
 import os
+import math
+import json
 
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from selection_utils import datasampler_factory
 
 import torchvision.transforms as transforms
 
@@ -18,10 +21,8 @@ from transform_helper import AddGaussianNoice
 import properties as properties
 from pprint import pprint
 import wandb
-wandb.Table.MAX_ROWS = 50000
+# wandb.Table.MAX_ROWS = 50000  
 wandb.init(project='ocr-calls-reduction', entity='tataganesh')
-
-
 minibatch_subset_methods = {"random": random_subset}
 class TrainNNPrep():
 
@@ -52,10 +53,21 @@ class TrainNNPrep():
         self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
         self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
-        self.minibatch_sample = minibatch_subset_methods.get(args.minibatch_subset, None)
+        self.selection_method = args.minibatch_subset
+        self.minibatch_sample = minibatch_subset_methods.get(self.selection_method, None)
+        self.cls_sampler = datasampler_factory(self.selection_method)
+        with open(args.cers_ocr_path, 'r') as f:
+            self.cers_with_img = json.load(f)
+        cers = dict()
+        for _, value in self.cers_with_img.items():
+            cers.update(value)
+        if self.selection_method == "uniformCER":
+            self.sampler = self.cls_sampler(cers)
+        else:
+            self.sampler = self.cls_sampler()
         self.train_batch_prop = 1
     
-        if args.minibatch_subset_prop and self.minibatch_sample:
+        if args.minibatch_subset_prop and self.selection_method:
             self.train_batch_prop = args.minibatch_subset_prop
         
         self.train_subset_size = args.train_subset_size
@@ -150,6 +162,7 @@ class TrainNNPrep():
 
                 CRNN_training_loss = 0
                 # image_preds = list()
+                file_name = None
                 for i in range(len(labels_dicts)):
                     image = images[i]
                     labels_dict = labels_dicts[i]
@@ -164,17 +177,34 @@ class TrainNNPrep():
                     text_crops_all, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
                     sample_indices = None
-
+                    folder_name, file_name = name.split("/")[-2:]
+                    print(folder_name, file_name)
+                    text_strip_names = self.cers_with_img[folder_name + "_" + file_name].keys()
+                    if len(text_strip_names):
+                        filtered_strips = [label_instance["index"] for label_instance in labels_dict]
+                        min_index = min(int(k.split("_")[0]) for k in text_strip_names)
+                        text_strip_names_filtered = [strip_name for strip_name in text_strip_names if int(strip_name.split("_")[0]) - min_index in filtered_strips]
+                        text_strip_indices = [int(k.split("_")[0]) - min_index  for k in text_strip_names_filtered]
+                        text_strip_names_filtered.extend([f"{k}_{labels[i]}_{folder_name}.png" for i, k in enumerate(filtered_strips) if k not in text_strip_indices])
+                        text_strip_names = sorted(text_strip_names_filtered, key=lambda k:int(k.split("_")[0]))
                     # check for number of text crops to be greater than 2, otherwise call black-box for all crops
-                    if self.minibatch_sample and epoch >= self.warmup_epochs and text_crops_all.shape[0] > 2:
-                        num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
-                        if num_samples_subset == 0:
-                            num_samples_subset = 1
-                        skipped_text_crops, labels_skipped, sample_indices = self.minibatch_sample(text_crops_all, labels, num_samples_subset)
-                         
-                        ocr_crops_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
-                        ocr_crops_mask[sample_indices] = False
-                        text_crops = text_crops_all[ocr_crops_mask].detach().cpu()
+                    if self.selection_method and epoch >= self.warmup_epochs and text_crops_all.shape[0] > 2:
+                        num_bb_samples = max(1, math.ceil(text_crops_all.shape[0]*(1 - self.train_batch_prop)))
+                        # num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
+                        num_samples_subset = max(1, text_crops_all.shape[0] - num_bb_samples)
+                        
+                        # skipped_text_crops, labels_skipped, sample_indices = self.minibatch_sample(text_crops_all, labels, num_samples_subset)
+                        # text_crops, labels_ocr, bb_sample_indices = self.minibatch_sample(text_crops_all, labels, num_samples_subset)
+                        text_crops, labels_ocr, bb_sample_indices = self.sampler.query(text_crops_all, labels, num_bb_samples, text_strip_names)
+                        text_crops = text_crops.detach().cpu()
+
+                        skipped_crops_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
+                        skipped_crops_mask[bb_sample_indices] = False
+                        skipped_text_crops = text_crops_all[skipped_crops_mask]
+                        labels_skipped = [labels[i] for i in range(skipped_crops_mask.shape[0]) if skipped_crops_mask[i]]
+                        # ocr_crops_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
+                        # ocr_crops_mask[sample_indices] = False
+                        # text_crops = text_crops_all[ocr_crops_mask].detach().cpu()
 
                         if self.label_impute:
                             model_lab_last_batch = [self.model_labels_last[name + "_" + str(i.item())] for i in sample_indices]
@@ -262,6 +292,15 @@ class TrainNNPrep():
                     if step % 100 == 0:
                         print("Iteration: %d => %f" % (step, loss.item()))
                     step += 1
+                    print(len(text_strip_names))
+                    
+                    if self.selection_method == "uniformCER" and len(text_strip_names):
+                        batch_cers = list()
+                        for i in range(len(labels)):
+                            _, batch_cer = compare_labels([model_gen_labels[i]], [labels[i]])
+                            batch_cers.append(batch_cer)
+                        print(len(batch_cers))
+                        self.sampler.update_cer(batch_cers, text_strip_names)
                 # self.optimizer_crnn.step()
                 self.optimizer_prep.step()
 
@@ -363,13 +402,11 @@ if __name__ == "__main__":
                         help="specify non-default Prep model location. By default, a new Prep model will be used")
     parser.add_argument('--exp_base_path', default=".",
                         help='Base path for experiment. Defaults to current directory')
-    # parser.add_argument('--tb_log_path', default=properties.prep_tensor_board,
-    #                     help='Base path to save Tensorboard summaries.') 
     parser.add_argument('--ocr', default='Tesseract',
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
-    parser.add_argument('--minibatch_subset',  choices=['random'], 
+    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER'], 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
@@ -390,6 +427,8 @@ if __name__ == "__main__":
                             help="Impute black-box labels for approximator training", action="store_true")
     parser.add_argument('--weight_decay',
                             help="Weight Decay for the optimizer", type=float, default=5e-4)
+    parser.add_argument('--cers_ocr_path',
+                            help="Weight Decay for the optimizer")
     args = parser.parse_args()
     print(args)
     wandb.config.update(vars(args))
