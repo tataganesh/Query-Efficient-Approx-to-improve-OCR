@@ -2,7 +2,7 @@ module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 
-EXP_ID=63
+EXP_ID=57
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="vgg"
 # if [ ! -d $DATA_PATH ]
@@ -37,8 +37,8 @@ cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 # cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 # [ ! -f "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/Prep_model_4" ] && echo "File not found!" 
-for i in 49
+for i in 41
 do
     echo "Running $i preprocessor"
-    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_68/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_87/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
 done
