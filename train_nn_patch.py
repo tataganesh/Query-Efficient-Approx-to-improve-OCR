@@ -203,7 +203,7 @@ class TrainNNPrep():
                         print(f"Total Samples - {text_crops_all.shape[0]}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
                         epoch_print_flag = False
-                    if text_crops.shape[0] > 0 and  int(self.train_batch_prop)!=1: # Cases when the black-box should not be called at all (in a mini-batch)
+                    if text_crops.shape[0] > 0 and (not self.minibatch_sample or int(self.train_batch_prop)!=1): # Cases when the black-box should not be called at all (in a mini-batch)
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
                             noisy_imgs = self.add_noise(text_crops, noiser)
