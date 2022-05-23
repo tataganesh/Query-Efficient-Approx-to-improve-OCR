@@ -20,8 +20,9 @@ from utils import get_text_stack, get_ocr_helper, compare_labels
 from transform_helper import AddGaussianNoice
 import properties as properties
 from pprint import pprint
+import numpy as np
 import wandb
-# wandb.Table.MAX_ROWS = 50000  
+wandb.Table.MAX_ROWS = 100000
 wandb.init(project='ocr-calls-reduction', entity='tataganesh')
 minibatch_subset_methods = {"random": random_subset}
 class TrainNNPrep():
@@ -56,20 +57,26 @@ class TrainNNPrep():
         self.selection_method = args.minibatch_subset
         self.minibatch_sample = minibatch_subset_methods.get(self.selection_method, None)
         self.cls_sampler = datasampler_factory(self.selection_method)
-        with open(args.cers_ocr_path, 'r') as f:
-            self.cers_with_img = json.load(f)
-        cers = dict()
-        for _, value in self.cers_with_img.items():
-            cers.update(value)
-        if self.selection_method == "uniformCER":
-            self.sampler = self.cls_sampler(cers)
-        else:
-            self.sampler = self.cls_sampler()
+
         self.train_batch_prop = 1
     
         if args.minibatch_subset_prop and self.selection_method:
             self.train_batch_prop = args.minibatch_subset_prop
         
+        with open(args.cers_ocr_path, 'r') as f:
+            self.cers_with_img = json.load(f)
+        cers = dict()
+        for _, value in self.cers_with_img.items():
+            cers.update(value)
+        # text_strip_indices_global = np.array()
+        if self.selection_method == "uniformCER":
+            self.sampler = self.cls_sampler(cers)
+        elif self.selection_method == "uniformCERglobal":
+            num_samples =  int(len(cers) * (1 - self.train_batch_prop))
+            self.sampler = self.cls_sampler(cers, num_samples)
+            self.cer_per_epoch = np.full((len(cers), self.max_epochs), -1)
+        else:
+            self.sampler = self.cls_sampler()
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
         self.input_size = properties.input_size
@@ -149,6 +156,8 @@ class TrainNNPrep():
         total_bb_calls = 0
 
         for epoch in range(self.start_epoch, self.max_epochs):
+            if "global" in self.selection_method: # Criterion to CHECK if this is a global or local selection method
+                self.sampler.select_samples()
             subset_samples = 0
             training_loss = 0
             epoch_print_flag = True
@@ -178,7 +187,7 @@ class TrainNNPrep():
                         pred, labels_dict, self.input_size)
                     sample_indices = None
                     folder_name, file_name = name.split("/")[-2:]
-                    print(folder_name, file_name)
+                    # print(folder_name, file_name)
                     text_strip_names = self.cers_with_img[folder_name + "_" + file_name].keys()
                     if len(text_strip_names):
                         filtered_strips = [label_instance["index"] for label_instance in labels_dict]
@@ -233,7 +242,7 @@ class TrainNNPrep():
                         print(f"Total Samples - {text_crops_all.shape[0]}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
                         epoch_print_flag = False
-                    if text_crops.shape[0] > 0 and  int(self.train_batch_prop)!=1: # Cases when the black-box should not be called at all (in a mini-batch)
+                    if text_crops.shape[0] > 0 and not(self.selection_method and int(self.train_batch_prop)==1): # Cases when the black-box should not be called at all (in a mini-batch)
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
                             noisy_imgs = self.add_noise(text_crops, noiser)
@@ -269,12 +278,6 @@ class TrainNNPrep():
                     # img_out = image_preds[i]
                     n_text_crops, labels = get_text_stack(
                         img_out, labels_dict, self.input_size)
-                    # total_samples += n_text_crops.shape[0]
-                    # if self.minibatch_sample is not None:
-                    #     n_text_crops = n_text_crops[sample_indices]
-                    #     labels = [labels[i] for i in sample_indices]
-                    # subset_samples += n_text_crops.shape[0]
-                    # print(f"Preprocessor Samples - {n_text_crops.shape[0]}")
 
                     scores, y, pred_size, y_size = self._call_model(
                         n_text_crops, labels)
@@ -292,18 +295,20 @@ class TrainNNPrep():
                     if step % 100 == 0:
                         print("Iteration: %d => %f" % (step, loss.item()))
                     step += 1
-                    print(len(text_strip_names))
+
                     
-                    if self.selection_method == "uniformCER" and len(text_strip_names):
+                    if self.selection_method != "random" and len(text_strip_names):
                         batch_cers = list()
                         for i in range(len(labels)):
                             _, batch_cer = compare_labels([model_gen_labels[i]], [labels[i]])
                             batch_cers.append(batch_cer)
-                        print(len(batch_cers))
                         self.sampler.update_cer(batch_cers, text_strip_names)
                 # self.optimizer_crnn.step()
                 self.optimizer_prep.step()
 
+            if self.selection_method == "uniformCERglobal":
+                self.cer_per_epoch[:, epoch] = np.array(list(self.sampler.cers.values()))
+            print(f"Epoch BB calls - {epoch_bb_calls}")
             train_loss =  training_loss / self.train_set_size
             writer.add_scalar('Training Loss', training_loss /
                               self.train_set_size, epoch + 1)
@@ -376,6 +381,9 @@ class TrainNNPrep():
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
+        epochs_cer_tbl = wandb.Table(data=self.cer_per_epoch.tolist(), columns=list(range(self.cer_per_epoch.shape[1])))
+        wandb.log({"CER Values": epochs_cer_tbl})
+
         writer.flush()
         writer.close()
 
@@ -406,7 +414,7 @@ if __name__ == "__main__":
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
-    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER'], 
+    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER', 'uniformCERglobal'], 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
@@ -428,7 +436,7 @@ if __name__ == "__main__":
     parser.add_argument('--weight_decay',
                             help="Weight Decay for the optimizer", type=float, default=5e-4)
     parser.add_argument('--cers_ocr_path',
-                            help="Weight Decay for the optimizer")
+                            help="Cer information json")
     args = parser.parse_args()
     print(args)
     wandb.config.update(vars(args))

@@ -5,14 +5,13 @@
 #SBATCH --time=10:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/%j.out
 
-EXP_NUM=86
+EXP_NUM=90
 echo "Running Experiment $EXP_NUM"
 
 module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 wandb enabled
 wandb login $WANDB_API_KEY
-
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="patch_dataset"
@@ -43,7 +42,7 @@ echo "Running training script"
 # python -u train_nn_patch.py --epoch $EPOCH  --crnn_model  $CRNN_MODEL_PATH --data_base_path $SLURM_TMPDIR --exp_base_path $EXP_BASE_PATH --exp_name patch_90 --exp_id $EXP_NUM  --minibatch_subset random --minibatch_subset_prop 1  --inner_limit 2 --label_impute --warmup_epochs 1 --prep_model $PREP_MODEL_PATH # 4 --minibatch_subset random --minibatch_subset_prop 0.9 # --train_subset_size 50 --val_subset_size 25 
 # python -u train_nn_patch.py --epoch $EPOCH  --crnn_model  $CRNN_MODEL_PATH --data_base_path $SLURM_TMPDIR --exp_base_path $EXP_BASE_PATH --exp_name patch_100_no_blackbox --exp_id $EXP_NUM --minibatch_subset random --minibatch_subset_prop 1 --inner_limit 2 --warmup_epochs 0
 # python -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_100_no_blackbox_0.2 --exp_id $EXP_NUM --minibatch_subset random --minibatch_subset_prop 1 --inner_limit 2 --warmup_epochs 0 --scalar 0.2
-python -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_95_random_no_wd --exp_id $EXP_NUM --minibatch_subset uniformCER --minibatch_subset_prop 0.95 --inner_limit 2 --warmup_epochs 0 --cers_ocr_path $CER_JSON_PATH --weight_decay 0
+python -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_95_unifromCERglobal --exp_id $EXP_NUM --minibatch_subset uniformCERglobal --minibatch_subset_prop 0.95 --inner_limit 2 --warmup_epochs 0 --cers_ocr_path $CER_JSON_PATH --train_subset_size 50 --val_subset_size 25
 
 
 

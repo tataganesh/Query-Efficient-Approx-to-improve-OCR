@@ -1,8 +1,10 @@
 from abc import ABCMeta, abstractmethod
+from re import L
 import torch
 import json
 from copy import deepcopy
 import traceback
+import numpy as np
 class DataSampler(metaclass=ABCMeta):
     def __init__(self, discount_factor=0):
         self.discount_factor = discount_factor  
@@ -27,6 +29,7 @@ class RandomSampler(DataSampler):
         num_images = images.shape[0]
         rand_indices = torch.randperm(num_images)[:num_samples]
         return images[rand_indices], [labels[i] for i in rand_indices], rand_indices
+
 
 
 
@@ -71,10 +74,43 @@ class UniformCerSampler(DataSampler):
             self.cers[names[i]] = cers[i]
 
 
+class UniformSamplerGlobal(DataSampler):
+    def __init__(self, cers, num_samples):
+        self.cers = cers
+        self.num_samples = num_samples
+        self.selected_indices = np.zeros(num_samples, dtype=np.int32)
+        self.selected_samplenames = dict()
+
+    def select_samples(self):
+        cer_keys = list(self.cers.keys())
+        cer_values = np.array(list(self.cers.values()))
+        sorted_cer_indices = np.argsort(cer_values)
+        for i, split in enumerate(np.array_split(sorted_cer_indices, self.num_samples)):
+            self.selected_indices[i] = np.random.choice(split)
+            selected_samplename = cer_keys[self.selected_indices[i]]
+            self.selected_samplenames[selected_samplename] = True
+
+
+    def query(self, images, labels, num_samples=-1, names=None):
+        selection_idx = list()
+        print(len(names))
+        for i, name in enumerate(names):
+            if name in self.selected_samplenames:
+                selection_idx.append(i)
+        print(len(selection_idx))
+        selection_idx = torch.tensor(selection_idx).long()
+        return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
+
+    def update_cer(self, sample_cers, names):
+        for i in range(len(sample_cers)): 
+            if names[i] not in self.cers:
+                #print(f"{names[i]} not found in cer json")
+                continue
+            self.cers[names[i]] = sample_cers[i]
 
 
 def datasampler_factory(sampling_method):
-    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler}
+    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler, "uniformCERglobal": UniformSamplerGlobal}
     return method_mapping[sampling_method]
 
 
