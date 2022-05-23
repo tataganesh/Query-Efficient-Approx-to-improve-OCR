@@ -9,7 +9,10 @@
 {
     "0_hunting_receipt466": 0.1
 }
-``` 
+```
+```
+ python ocr_inference_patch_dataset.py  --data_base_path $SLURM_TMPDIR --cers_save_path pos_dataset_cers.json
+ ``` 
 * Use json from ocr_inference.py and pass it to patch_image_mapping.py (along with the dataset folder) to obtain the json of the following format :
 
 ```
