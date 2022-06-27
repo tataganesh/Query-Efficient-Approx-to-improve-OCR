@@ -5,6 +5,8 @@ import json
 from copy import deepcopy
 import traceback
 import numpy as np
+import random
+
 class DataSampler(metaclass=ABCMeta):
     def __init__(self, discount_factor=0):
         self.discount_factor = discount_factor  
@@ -35,8 +37,9 @@ class RandomSampler(DataSampler):
 
 
 class UniformCerSampler(DataSampler):
-    def __init__(self, cers):
+    def __init__(self, cers, discount_factor=1):
         self.cers = cers
+        self.discount_factor = discount_factor
         
     def query(self, images, labels, num_samples, names):
         """Get 
@@ -50,28 +53,29 @@ class UniformCerSampler(DataSampler):
             tuple: Return subset of images and labels. Chosen randomly. 
         """    
         num_images = images.shape[0]
-        half_num_images = int(num_images/2)
-        half_num_samples = int(num_samples/2)
+        half_num_images = int(num_images/2) + num_images % 2
         image_cers = list()
         for name in names:
-            if name not in self.cers:
-                image_cers.append(0.0)
-            else:
+            if name in self.cers:
                 image_cers.append(self.cers[name])
         image_cers = torch.tensor(image_cers)
         sorted_indices = torch.argsort(image_cers, descending=True)
-        if num_samples == 1:
-            selection_idx = torch.tensor([sorted_indices[half_num_images]])
-        else:
-            before_half = half_num_images- half_num_samples
-            after_half = before_half + num_samples
-            selection_idx = sorted_indices[before_half: after_half]
+        alternating_indices = torch.zeros_like(sorted_indices)
+        even_indices = np.arange(0, sorted_indices.shape[0], 2)
+        odd_indices = np.arange(1, sorted_indices.shape[0], 2)
+        alternating_indices[even_indices] = sorted_indices[:half_num_images]
+        second_half_indices = sorted_indices[half_num_images:]
+        inv_idx = torch.arange(second_half_indices.shape[0]-1, -1, -1).long()
+        alternating_indices[odd_indices] = second_half_indices[inv_idx]
+        selection_idx = alternating_indices[:num_samples]
         return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
             
 
     def update_cer(self, cers, names):
         for i in range(len(cers)):
-            self.cers[names[i]] = cers[i]
+            if names[i] not in self.cers:
+                continue
+            self.cers[names[i]] = self.discount_factor * cers[i] +  (1 - self.discount_factor) * self.cers[names[i]]
 
 
 class UniformSamplerGlobal(DataSampler):
@@ -82,22 +86,21 @@ class UniformSamplerGlobal(DataSampler):
         self.selected_samplenames = dict()
 
     def select_samples(self):
+        self.selected_samplenames.clear()
         cer_keys = list(self.cers.keys())
         cer_values = np.array(list(self.cers.values()))
         sorted_cer_indices = np.argsort(cer_values)
         for i, split in enumerate(np.array_split(sorted_cer_indices, self.num_samples)):
             self.selected_indices[i] = np.random.choice(split)
             selected_samplename = cer_keys[self.selected_indices[i]]
-            self.selected_samplenames[selected_samplename] = True
+            self.selected_samplenames[selected_samplename] = True 
 
 
     def query(self, images, labels, num_samples=-1, names=None):
         selection_idx = list()
-        print(len(names))
         for i, name in enumerate(names):
             if name in self.selected_samplenames:
                 selection_idx.append(i)
-        print(len(selection_idx))
         selection_idx = torch.tensor(selection_idx).long()
         return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
 
@@ -109,8 +112,37 @@ class UniformSamplerGlobal(DataSampler):
             self.cers[names[i]] = sample_cers[i]
 
 
+class RandomSamplerGlobal(DataSampler):
+    def __init__(self, cers, num_samples):
+        self.cers = cers
+        self.num_samples = num_samples
+        self.selected_samplenames = dict()
+
+    def select_samples(self):
+        self.selected_samplenames.clear()
+        cer_keys = list(self.cers.keys())
+        samplenames = random.sample(cer_keys, self.num_samples)
+        for name in samplenames:
+            self.selected_samplenames[name] = True 
+
+
+    def query(self, images, labels, num_samples=-1, names=None):
+        selection_idx = list()
+        for i, name in enumerate(names):
+            if name in self.selected_samplenames:
+                selection_idx.append(i)
+        selection_idx = torch.tensor(selection_idx).long()
+        return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
+
+    def update_cer(self, sample_cers, names):
+        for i in range(len(sample_cers)): 
+            if names[i] not in self.cers:
+                #print(f"{names[i]} not found in cer json")
+                continue
+            self.cers[names[i]] = sample_cers[i]
+
 def datasampler_factory(sampling_method):
-    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler, "uniformCERglobal": UniformSamplerGlobal}
+    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler, "uniformCERglobal": UniformSamplerGlobal, "randomglobal": RandomSamplerGlobal}
     return method_mapping[sampling_method]
 
 

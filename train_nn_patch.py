@@ -4,6 +4,7 @@ import argparse
 import os
 import math
 import json
+import random as python_random
 
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
@@ -39,9 +40,10 @@ class TrainNNPrep():
         self.prep_model_path = args.prep_model
         self.exp_base_path = args.exp_base_path
         self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
+        self.cers_base_path = os.path.join(self.exp_base_path, "cers")
         self.tensorboard_log_path = os.path.join(self.exp_base_path, properties.prep_tensor_board)
         self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
-        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path])
+        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path])
 
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
@@ -49,6 +51,8 @@ class TrainNNPrep():
         self.is_random_std = args.random_std
         self.label_impute = args.label_impute
         torch.manual_seed(42)
+        python_random.seed(42)
+
 
         self.model_labels_last = dict() # Seems inefficient
         self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
@@ -60,21 +64,22 @@ class TrainNNPrep():
 
         self.train_batch_prop = 1
     
-        if args.minibatch_subset_prop and self.selection_method:
+        if args.minibatch_subset_prop is not None and self.selection_method:
             self.train_batch_prop = args.minibatch_subset_prop
         
         with open(args.cers_ocr_path, 'r') as f:
-            self.cers_with_img = json.load(f)
-        cers = dict()
-        for _, value in self.cers_with_img.items():
-            cers.update(value)
+            self.cers = json.load(f)
         # text_strip_indices_global = np.array()
         if self.selection_method == "uniformCER":
-            self.sampler = self.cls_sampler(cers)
+            self.sampler = self.cls_sampler(self.cers, args.discount_factor)
         elif self.selection_method == "uniformCERglobal":
-            num_samples =  int(len(cers) * (1 - self.train_batch_prop))
-            self.sampler = self.cls_sampler(cers, num_samples)
-            self.cer_per_epoch = np.full((len(cers), self.max_epochs), -1)
+            num_samples =  int(len(self.cers) * (1 - self.train_batch_prop))
+            self.sampler = self.cls_sampler(self.cers, num_samples)
+            self.cer_per_epoch = np.array(self.cers.values)
+        elif self.selection_method == "randomglobal":
+            num_samples =  int(len(self.cers) * (1 - self.train_batch_prop))
+            self.sampler = self.cls_sampler(self.cers, num_samples)
+            self.cer_per_epoch = np.array(self.cers.values)
         else:
             self.sampler = self.cls_sampler()
         self.train_subset_size = args.train_subset_size
@@ -108,8 +113,14 @@ class TrainNNPrep():
         self.loader_train = torch.utils.data.DataLoader(
             self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=PatchDataset.collate)
 
-        self.train_set_size = int(len(self.dataset) * self.train_batch_prop)
+
+        self.train_set_size = int(len(self.dataset))
         self.val_set_size = len(self.validation_set)
+
+        image_proportion = args.image_prop # Proportion of images to select per epoch
+        self.num_subset_images = None
+        if image_proportion:
+            self.num_subset_images = int(image_proportion * self.train_set_size)
             
 
         self.primary_loss_fn = CTCLoss().to(self.device)
@@ -155,6 +166,7 @@ class TrainNNPrep():
         batch_step = 0
         total_bb_calls = 0
 
+
         for epoch in range(self.start_epoch, self.max_epochs):
             if "global" in self.selection_method: # Criterion to CHECK if this is a global or local selection method
                 self.sampler.select_samples()
@@ -163,6 +175,12 @@ class TrainNNPrep():
             epoch_print_flag = True
             epoch_bb_calls = 0
             # epoch_prop = 
+            if self.num_subset_images:
+                print(f"Total images - {self.train_set_size}, Subset Images - {self.num_subset_images}")
+                random_indices = torch.randperm(self.train_set_size)[:self.num_subset_images]
+                random_sampler = torch.utils.data.SubsetRandomSampler(random_indices)
+                self.loader_train = torch.utils.data.DataLoader(self.dataset, batch_size=self.batch_size,
+                                            sampler=random_sampler, drop_last=True, collate_fn=PatchDataset.collate)
             for images, labels_dicts, names in self.loader_train:
                 self.crnn_model.train()
                 self.prep_model.eval()
@@ -179,29 +197,21 @@ class TrainNNPrep():
                     image = image.unsqueeze(0)
                     X_var = image.to(self.device)
                     pred = self.prep_model(X_var)[0]
-                    # image_preds.append(pred)
-
-                    # pred_cpu = pred.detach().cpu()[0]
-
                     text_crops_all, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
                     sample_indices = None
                     folder_name, file_name = name.split("/")[-2:]
-                    # print(folder_name, file_name)
-                    text_strip_names = self.cers_with_img[folder_name + "_" + file_name].keys()
-                    if len(text_strip_names):
-                        filtered_strips = [label_instance["index"] for label_instance in labels_dict]
-                        min_index = min(int(k.split("_")[0]) for k in text_strip_names)
-                        text_strip_names_filtered = [strip_name for strip_name in text_strip_names if int(strip_name.split("_")[0]) - min_index in filtered_strips]
-                        text_strip_indices = [int(k.split("_")[0]) - min_index  for k in text_strip_names_filtered]
-                        text_strip_names_filtered.extend([f"{k}_{labels[i]}_{folder_name}.png" for i, k in enumerate(filtered_strips) if k not in text_strip_indices])
-                        text_strip_names = sorted(text_strip_names_filtered, key=lambda k:int(k.split("_")[0]))
-                    # check for number of text crops to be greater than 2, otherwise call black-box for all crops
-                    if self.selection_method and epoch >= self.warmup_epochs and text_crops_all.shape[0] > 2:
+                    file_name = file_name.split(".")[0]
+                    text_strip_names = list()
+                    for j in range(len(labels)):
+                        text_strip_name = f"{j}_{labels[j]}_{folder_name}_{file_name}"
+                        text_strip_names.append(text_strip_name)
+                    # check for number of text crops to be greater than 2, otherwise call black-box for all crops, the 
+                    # greater-than-2 condition is ignored if global sampling is performed
+                    if self.selection_method and epoch >= self.warmup_epochs and (text_crops_all.shape[0] > 2 or "global" in self.selection_method):
                         num_bb_samples = max(1, math.ceil(text_crops_all.shape[0]*(1 - self.train_batch_prop)))
                         # num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
                         num_samples_subset = max(1, text_crops_all.shape[0] - num_bb_samples)
-                        
                         # skipped_text_crops, labels_skipped, sample_indices = self.minibatch_sample(text_crops_all, labels, num_samples_subset)
                         # text_crops, labels_ocr, bb_sample_indices = self.minibatch_sample(text_crops_all, labels, num_samples_subset)
                         text_crops, labels_ocr, bb_sample_indices = self.sampler.query(text_crops_all, labels, num_bb_samples, text_strip_names)
@@ -211,9 +221,6 @@ class TrainNNPrep():
                         skipped_crops_mask[bb_sample_indices] = False
                         skipped_text_crops = text_crops_all[skipped_crops_mask]
                         labels_skipped = [labels[i] for i in range(skipped_crops_mask.shape[0]) if skipped_crops_mask[i]]
-                        # ocr_crops_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
-                        # ocr_crops_mask[sample_indices] = False
-                        # text_crops = text_crops_all[ocr_crops_mask].detach().cpu()
 
                         if self.label_impute:
                             model_lab_last_batch = [self.model_labels_last[name + "_" + str(i.item())] for i in sample_indices]
@@ -253,8 +260,8 @@ class TrainNNPrep():
                                 scores, y, pred_size, y_size)
                             temp_loss += loss.item()
                             loss.backward()
-                        total_bb_calls += text_crops.shape[0]
-                        epoch_bb_calls += text_crops.shape[0]
+                            total_bb_calls += text_crops.shape[0]
+                            epoch_bb_calls += text_crops.shape[0]
  
                     CRNN_training_loss += temp_loss/self.inner_limit
                 self.optimizer_crnn.step()
@@ -306,8 +313,13 @@ class TrainNNPrep():
                 # self.optimizer_crnn.step()
                 self.optimizer_prep.step()
 
-            if self.selection_method == "uniformCERglobal":
-                self.cer_per_epoch[:, epoch] = np.array(list(self.sampler.cers.values()))
+            # if "global" in self.selection_method:
+            #     epochs_cer_tbl = wandb.Table(data=[list(self.sampler.cers.values())], columns=list(range(len(self.sampler.cers))))
+            #     wandb.log({"CER Values": epochs_cer_tbl})
+            with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
+                json.dump(self.sampler.cers, f)
+
+                # self.cer_per_epoch[:, epoch] = np.array(list(self.sampler.cers.values()))
             print(f"Epoch BB calls - {epoch_bb_calls}")
             train_loss =  training_loss / self.train_set_size
             writer.add_scalar('Training Loss', training_loss /
@@ -381,8 +393,8 @@ class TrainNNPrep():
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
-        epochs_cer_tbl = wandb.Table(data=self.cer_per_epoch.tolist(), columns=list(range(self.cer_per_epoch.shape[1])))
-        wandb.log({"CER Values": epochs_cer_tbl})
+        # epochs_cer_tbl = wandb.Table(data=self.cer_per_epoch.tolist(), columns=list(range(self.cer_per_epoch.shape[1])))
+        # wandb.log({"CER Values": epochs_cer_tbl})
 
         writer.flush()
         writer.close()
@@ -414,7 +426,7 @@ if __name__ == "__main__":
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
-    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER', 'uniformCERglobal'], 
+    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER', 'uniformCERglobal', 'randomglobal'], 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
@@ -437,6 +449,8 @@ if __name__ == "__main__":
                             help="Weight Decay for the optimizer", type=float, default=5e-4)
     parser.add_argument('--cers_ocr_path',
                             help="Cer information json")
+    parser.add_argument('--image_prop', help="Percentage of images per epoch", type=float)
+    parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
     args = parser.parse_args()
     print(args)
     wandb.config.update(vars(args))
