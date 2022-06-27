@@ -1,6 +1,7 @@
 module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
+
 DATA_PATH="$SLURM_TMPDIR/data"
 if [ ! -d $DATA_PATH ]
 then

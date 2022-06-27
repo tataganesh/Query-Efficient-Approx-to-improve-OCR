@@ -2,6 +2,7 @@ module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 
+
 EXP_ID=57
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="vgg"
