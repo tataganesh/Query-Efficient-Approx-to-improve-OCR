@@ -53,6 +53,7 @@ class TrainNNPrep():
         self.std = args.std
         self.is_random_std = args.random_std
         self.label_impute = args.label_impute
+        self.softlabel_tracking_prob = args.softlabel_tracking_prob
         torch.manual_seed(42)
         python_random.seed(42)
 
@@ -195,6 +196,12 @@ class TrainNNPrep():
             all_ctc_losses.append(loss_weight*ctc_loss)
         return sum(all_ctc_losses)
 
+    def add_labels_to_history(self, image_keys, ocr_labels):
+        for lbl_index, name in  enumerate(image_keys): 
+            if name not in self.tracked_labels:
+                self.tracked_labels[name] = list() # Why is this required?
+            self.tracked_labels[name].append(ocr_labels[lbl_index])
+
     def _get_loss(self, scores, y, pred_size, y_size, img_preds):
         pri_loss = self.primary_loss_fn(scores, y, pred_size, y_size)
         sec_loss = self.secondary_loss_fn(img_preds, torch.ones(
@@ -310,17 +317,26 @@ class TrainNNPrep():
                             self.prep_model.zero_grad()
                             if i == 0 and self.inner_limit_skip: # Skip adding noise to one of the inner loops
                                 noisy_imgs = text_crops
-                                ocr_labels = self.ocr.get_labels(noisy_imgs)
-                                # if torch.rand(1).items() > 0.5 and self.impute_using_tracking:
-                                #     pass
+                                # Get indices of text strips for which history is not present
+                                history_not_present_indices = [txt_idx for txt_idx, name in enumerate(text_crop_names) if name not in self.tracked_labels or not self.tracked_labels[name]]
+                                ocr_labels = []
+                                text_crop_names_ocr = text_crop_names
+                                # With 50% probability, call the black-box, else use tracking for soft labels
+                                if torch.rand(1).item() < self.softlabel_tracking_prob:
+                                    if history_not_present_indices:
+                                        ocr_labels = self.ocr.get_labels(noisy_imgs[history_not_present_indices])
+                                        text_crop_names_ocr = [text_crop_names[idx] for idx in history_not_present_indices]
+                                else:
+                                    ocr_labels = self.ocr.get_labels(noisy_imgs)
+                                if ocr_labels:
+                                    # Only required if OCR is called, to append to the existing history
+                                    self.add_labels_to_history(text_crop_names_ocr, ocr_labels)
                                 # Peek at history of OCR labels for each strip and construct weighted CTC loss
-                                for lbl_index, name in  enumerate(text_crop_names): 
-                                    if name not in self.tracked_labels:
-                                        self.tracked_labels[name] = list() # Why is this required?
-                                    self.tracked_labels[name].append(ocr_labels[lbl_index])
                                 target_batches = self.generate_ctc_target_batches(text_crop_names)
                                 scores, pred_size = self.call_crnn(noisy_imgs)
                                 loss = self.weighted_ctc_loss(scores, pred_size, target_batches)
+                                total_bb_calls += len(ocr_labels)
+                                epoch_bb_calls += len(ocr_labels)
                             else:
                                 noisy_imgs = self.add_noise(text_crops, noiser)
                                 ocr_labels = self.ocr.get_labels(noisy_imgs)
@@ -328,11 +344,12 @@ class TrainNNPrep():
                                     noisy_imgs, ocr_labels)
                                 loss = self.primary_loss_fn(
                                     scores, y, pred_size, y_size)
+                                total_bb_calls += text_crops.shape[0]
+                                epoch_bb_calls += text_crops.shape[0]
+ 
                             temp_loss += loss.item()
                             loss.backward()
-                            total_bb_calls += text_crops.shape[0]
-                            epoch_bb_calls += text_crops.shape[0]
- 
+
                     CRNN_training_loss += temp_loss/self.inner_limit
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
@@ -531,6 +548,8 @@ if __name__ == "__main__":
                             help="Cer information json")
     parser.add_argument('--image_prop', help="Percentage of images per epoch", type=float)
     parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
+    parser.add_argument('--softlabel_tracking_prob',
+                            help="Probability to not call OCR and used track labels to update approximator.", type=float, default=0)
     args = parser.parse_args()
     print(args)
     wandb.config.update(vars(args))
