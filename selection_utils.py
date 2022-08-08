@@ -78,6 +78,48 @@ class UniformCerSampler(DataSampler):
             self.cers[names[i]] = self.discount_factor * cers[i] +  (1 - self.discount_factor) * self.cers[names[i]]
 
 
+class CerRangeSampler(DataSampler):
+    def __init__(self, cers, discount_factor=1):
+        self.cers = cers
+        self.discount_factor = discount_factor
+        
+    def query(self, images, labels, num_samples, names):
+        """Get 
+
+        Args:
+            images (torch.tensor): Input images
+            labels (torch.tensor): Input labels
+            subset (int): Number of random samples.
+
+        Returns:
+            tuple: Return subset of images and labels. Chosen randomly. 
+        """    
+        image_cers = list()
+        selection_idx = torch.tensor([], dtype=torch.long)
+        for name in names:
+            if name in self.cers:
+                image_cers.append(self.cers[name])
+        image_cers = torch.tensor(image_cers)
+        if image_cers.shape[0] != 0:
+            cer_random_points = (image_cers.max() - image_cers.min()) * torch.rand(num_samples) + image_cers.min()
+            # cer_diff = torch.abs(image_cers.unsqueeze(1) - cer_random_points.unsqueeze(0))
+            selection_idx = torch.zeros(num_samples, dtype=torch.long)
+            image_cers_copy = torch.clone(image_cers)
+            for i, point in enumerate(cer_random_points):
+                index = torch.argmin(torch.abs(point - image_cers_copy))
+                selection_idx[i] = index
+                image_cers_copy[i] = 100
+        return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
+            
+
+    def update_cer(self, cers, names):
+        for i in range(len(cers)):
+            if names[i] not in self.cers:
+                continue
+            self.cers[names[i]] = self.discount_factor * cers[i] +  (1 - self.discount_factor) * self.cers[names[i]]
+
+
+
 class UniformSamplerGlobal(DataSampler):
     def __init__(self, cers, num_samples):
         self.cers = cers
@@ -142,7 +184,7 @@ class RandomSamplerGlobal(DataSampler):
             self.cers[names[i]] = sample_cers[i]
 
 def datasampler_factory(sampling_method):
-    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler, "uniformCERglobal": UniformSamplerGlobal, "randomglobal": RandomSamplerGlobal}
+    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler, "uniformCERglobal": UniformSamplerGlobal, "randomglobal": RandomSamplerGlobal, "rangeCER": CerRangeSampler}
     return method_mapping[sampling_method]
 
 

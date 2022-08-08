@@ -31,6 +31,7 @@ class TrainNNPrep():
 
     def __init__(self, args):
         self.batch_size = 1
+        self.random_seed = args.random_seed
         self.lr_crnn = args.lr_crnn
         self.lr_prep = args.lr_prep
         self.weight_decay = args.weight_decay
@@ -54,9 +55,9 @@ class TrainNNPrep():
         self.is_random_std = args.random_std
         self.label_impute = args.label_impute
         self.softlabel_tracking_prob = args.softlabel_tracking_prob
-        torch.manual_seed(42)
-        python_random.seed(42)
-
+        torch.manual_seed(self.random_seed)
+        python_random.seed(self.random_seed)
+        np.random.seed(self.random_seed)
 
         self.model_labels_last = dict() # Seems inefficient
         self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
@@ -73,13 +74,13 @@ class TrainNNPrep():
         if args.minibatch_subset_prop is not None and self.selection_method:
             self.train_batch_prop = args.minibatch_subset_prop
 
-        if self.selection_method:
-            self.cls_sampler = datasampler_factory(self.selection_method)
+        self.cers = None
+        if args.cers_ocr_path:
             with open(args.cers_ocr_path, 'r') as f:
                 self.cers = json.load(f)
-
-            # text_strip_indices_global = np.array()
-            if self.selection_method == "uniformCER":
+        if self.selection_method:
+            self.cls_sampler = datasampler_factory(self.selection_method)
+            if self.selection_method in ("uniformCER", "rangeCER"):
                 self.sampler = self.cls_sampler(self.cers, args.discount_factor)
             elif self.selection_method == "uniformCERglobal":
                 num_samples =  int(len(self.cers) * (1 - self.train_batch_prop))
@@ -92,8 +93,10 @@ class TrainNNPrep():
             else:
                 self.sampler = self.cls_sampler()
 
+        if self.cers:
             self.tracked_labels = {name: [] for name in self.cers.keys()}
-            self.ctc_loss_weights = [0.5, 0.25, 0.15, 0.07, 0.03]
+            # self.ctc_loss_weights = [0.5, 0.25, 0.15, 0.07, 0.03]
+            self.ctc_loss_weights = [1, 0.7, 0.4, 0.2, 0.1]
             self.window_size = len(self.ctc_loss_weights)
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
@@ -328,8 +331,8 @@ class TrainNNPrep():
                                         text_crop_names_ocr = [text_crop_names[idx] for idx in history_not_present_indices]
                                 else:
                                     ocr_labels = self.ocr.get_labels(noisy_imgs)
+                                # Only required if OCR is called, to append to the existing history
                                 if ocr_labels:
-                                    # Only required if OCR is called, to append to the existing history
                                     self.add_labels_to_history(text_crop_names_ocr, ocr_labels)
                                 # Peek at history of OCR labels for each strip and construct weighted CTC loss
                                 target_batches = self.generate_ctc_target_batches(text_crop_names)
@@ -403,13 +406,14 @@ class TrainNNPrep():
             # if "global" in self.selection_method:
             #     epochs_cer_tbl = wandb.Table(data=[list(self.sampler.cers.values())], columns=list(range(len(self.sampler.cers))))
             #     wandb.log({"CER Values": epochs_cer_tbl})
-            if self.selection_method:
-                with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
-                    json.dump(self.sampler.cers, f)
+            if self.selection_method: 
+                if "random" not in self.selection_method:
+                    with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
+                        json.dump(self.sampler.cers, f)
                 with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
                     json.dump(self.tracked_labels, f)
-                with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
-                    json.dump(self.tracked_labels, f)
+            with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
+                json.dump(self.tracked_labels, f)
 
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
 
@@ -506,6 +510,8 @@ if __name__ == "__main__":
                         help='prep model learning rate, not used by adadealta')
     parser.add_argument('--epoch', type=int,
                         default=25, help='number of epochs')
+    parser.add_argument('--random_seed',
+                            help="Random seed for experiment", type=int, default=42)
     parser.add_argument('--std', type=int,
                         default=2, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
@@ -523,7 +529,7 @@ if __name__ == "__main__":
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
-    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER', 'uniformCERglobal', 'randomglobal'], 
+    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER', 'uniformCERglobal', 'randomglobal', 'rangeCER'], 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
