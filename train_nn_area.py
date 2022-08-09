@@ -21,7 +21,7 @@ wandb.Table.MAX_ROWS = 50000
 import csv
 import pandas as pd
 from pprint import pprint
-wandb.init(project='ocr-calls-reduction', entity='tataganesh')
+wandb.init(project='ocr-calls-reduction', entity='tataganesh', tags=["VGG"])
 
 minibatch_subset_methods = {"random": random_subset}
 
@@ -194,10 +194,11 @@ class TrainNNPrep():
         print(f"Train batch size is {self.train_batch_size}")
         validation_step = 0
         jvp_train_cer = 0
+        total_bb_calls = 0
         self.crnn_model.zero_grad()
         
         for epoch in range(self.start_epoch, self.max_epochs):
-
+            epoch_bb_calls = 0
             step = 0
             training_loss = 0
             jvp_loss = 0
@@ -274,6 +275,9 @@ class TrainNNPrep():
                         loss_tensor.backward(self.sample_importance[indices].cuda())
                     else:
                         loss.backward()
+
+                    total_bb_calls += img_preds.shape[0]
+                    epoch_bb_calls += img_preds.shape[0]
                 jvp_loss_temp = 0
                 if self.jvp_jitter and epoch >= self.warmup_epochs:
                     ori_label_index = 0
@@ -403,7 +407,8 @@ class TrainNNPrep():
 
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                        "train_loss": train_loss, "jvp_cer": jvp_cer, "val_loss": val_loss, "Sample Importance": sample_importance_table, "train_batch_size": self.train_batch_size})
+                        "train_loss": train_loss, "val_loss": val_loss,
+                        "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls})
 
             
             save_img(img_preds.cpu(), 'out_' +
@@ -486,6 +491,8 @@ if __name__ == "__main__":
                             help="Specify scheduler to be used")
     parser.add_argument('--exp_name', default="jvp_jitter",
                             help="Specify name of experiment (JVP Jitter, Sample Dropping Etc.)")
+    parser.add_argument('--exp_id',
+                        help="Specify unique experiment ID")
     parser.add_argument('--history_lamda', default=0.1, type=float, 
                             help="Lamda for maintaining exponential average of sample information")
     parser.add_argument('--gradient_weighting', action="store_true", 
