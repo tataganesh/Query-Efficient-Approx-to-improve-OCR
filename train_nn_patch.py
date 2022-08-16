@@ -26,7 +26,7 @@ import numpy as np
 import wandb
 wandb.Table.MAX_ROWS = 100000
 wandb.init(project='ocr-calls-reduction', entity='tataganesh')
-minibatch_subset_methods = {"random": random_subset}
+
 class TrainNNPrep():
 
     def __init__(self, args):
@@ -64,7 +64,6 @@ class TrainNNPrep():
         self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
         self.selection_method = args.minibatch_subset
-        self.minibatch_sample = minibatch_subset_methods.get(self.selection_method, None)
 
         self.train_batch_prop = 1
     
@@ -394,7 +393,7 @@ class TrainNNPrep():
                     step += 1
 
                     
-                    if self.selection_method and self.selection_method != "random" and len(text_strip_names):
+                    if self.selection_method and len(text_strip_names):
                         batch_cers = list()
                         for i in range(len(labels)):
                             _, batch_cer = compare_labels([model_gen_labels[i]], [labels[i]])
@@ -407,9 +406,8 @@ class TrainNNPrep():
             #     epochs_cer_tbl = wandb.Table(data=[list(self.sampler.cers.values())], columns=list(range(len(self.sampler.cers))))
             #     wandb.log({"CER Values": epochs_cer_tbl})
             if self.selection_method: 
-                if "random" not in self.selection_method:
-                    with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
-                        json.dump(self.sampler.cers, f)
+                with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
+                    json.dump(self.sampler.cers, f)
                 with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
                     json.dump(self.tracked_labels, f)
             with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:

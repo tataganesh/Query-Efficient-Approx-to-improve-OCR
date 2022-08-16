@@ -1,5 +1,4 @@
 from abc import ABCMeta, abstractmethod
-from re import L
 import torch
 import json
 from copy import deepcopy
@@ -17,6 +16,9 @@ class DataSampler(metaclass=ABCMeta):
 
 
 class RandomSampler(DataSampler):
+    def __init__(self, cers=dict()):
+        self.cers = cers
+
     def query(self, images, labels, num_samples, names=None):
         """Get 
 
@@ -32,7 +34,9 @@ class RandomSampler(DataSampler):
         rand_indices = torch.randperm(num_images)[:num_samples]
         return images[rand_indices], [labels[i] for i in rand_indices], rand_indices
 
-
+    def update_cer(self, batch_cers, names):
+        for i in range(len(batch_cers)):
+            self.cers[names[i]] = batch_cers[i]
 
 
 
@@ -100,6 +104,7 @@ class CerRangeSampler(DataSampler):
             if name in self.cers:
                 image_cers.append(self.cers[name])
         image_cers = torch.tensor(image_cers)
+        print(image_cers)
         if image_cers.shape[0] != 0:
             cer_random_points = (image_cers.max() - image_cers.min()) * torch.rand(num_samples) + image_cers.min()
             # cer_diff = torch.abs(image_cers.unsqueeze(1) - cer_random_points.unsqueeze(0))
@@ -108,7 +113,7 @@ class CerRangeSampler(DataSampler):
             for i, point in enumerate(cer_random_points):
                 index = torch.argmin(torch.abs(point - image_cers_copy))
                 selection_idx[i] = index
-                image_cers_copy[i] = 100
+                image_cers_copy[index] = 100
         return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
             
 
