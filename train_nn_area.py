@@ -44,9 +44,11 @@ class TrainNNPrep():
 
         self.exp_base_path = args.exp_base_path
         self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
+        self.cers_base_path = os.path.join(self.exp_base_path, "cers")
+        self.tracked_labels_path = os.path.join(self.exp_base_path, "tracked_labels")
         self.tensorboard_log_path = os.path.join(self.exp_base_path, properties.prep_tensor_board)
         self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
-        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path])
+        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path])
 
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
@@ -62,8 +64,7 @@ class TrainNNPrep():
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
         self.start_epoch = args.start_epoch
-        self.minibatch_subset = args.minibatch_subset
-        self.minibatch_sample = minibatch_subset_methods.get(self.minibatch_subset, None)
+        self.selection_method = args.minibatch_subset
         self.train_batch_size = self.batch_size
            
         self.train_batch_prop = 1 
@@ -82,7 +83,7 @@ class TrainNNPrep():
         if self.selection_method:
             self.cls_sampler = datasampler_factory(self.selection_method)
             if self.selection_method in ("uniformCER", "rangeCER"):
-                self.sampler = self.cls_sampler(self.cers, args.discount_factor)
+                self.sampler = self.cls_sampler(self.cers)
             else:
                 self.sampler = self.cls_sampler()
         
@@ -242,7 +243,7 @@ class TrainNNPrep():
                 noisy_labels_list = list()
                 # jitter_noise_list = list()
                 indices_all = self.train_subset_index_mapping[indices].long()
-                if self.minibatch_subset and epoch >= self.warmup_epochs:
+                if self.selection_method and epoch >= self.warmup_epochs:
                     num_bb_samples = max(1, math.ceil(img_preds_all.shape[0]*(1 - self.train_batch_prop)))
                     img_preds, labels_gt, bb_sample_indices = self.sampler.query(img_preds_all, labels, num_bb_samples, names)
 
@@ -289,19 +290,19 @@ class TrainNNPrep():
                             add_labels_to_history(self, img_preds_names, ocr_labels)
                             # Peek at history of OCR labels for each strip and construct weighted CTC loss
                             target_batches = generate_ctc_target_batches(self, img_preds_names)
-                            scores, pred_size = call_crnn(self, noisy_imgs)
+                            scores, pred_size = call_crnn(self, img_preds)
                             loss = weighted_ctc_loss(self, scores, pred_size, target_batches)
                             total_bb_calls += len(ocr_labels)
                             epoch_bb_calls += len(ocr_labels)
-                    else:
-                        noisy_imgs = self.add_noise(img_preds, noiser)
-                        ocr_labels = self.ocr.get_labels(noisy_imgs)
-                        scores, y, pred_size, y_size = self._call_model(
-                            noisy_imgs, ocr_labels)
-                        loss = self.primary_loss_fn(
-                            scores, y, pred_size, y_size)
-                        total_bb_calls += img_preds.shape[0]
-                        epoch_bb_calls += img_preds.shape[0]
+                        else:
+                            noisy_imgs, noise = self.add_noise(img_preds, noiser)
+                            ocr_labels = self.ocr.get_labels(noisy_imgs)
+                            scores, y, pred_size, y_size = self._call_model(
+                                noisy_imgs, ocr_labels)
+                            loss = self.primary_loss_fn(
+                                scores, y, pred_size, y_size)
+                            total_bb_calls += img_preds.shape[0]
+                            epoch_bb_calls += img_preds.shape[0]
 
                     temp_loss += loss.item()
                     loss.backward()
@@ -324,7 +325,7 @@ class TrainNNPrep():
                 loss.backward()
                 self.optimizer_prep.step()
 
-                print(f"Preprocessor total samples - {img_preds.shape[0]}")
+                #print(f"Preprocessor total samples - {img_preds.shape[0]}")
 
                 # Update last seen prediction of image
                 model_gen_labels = pred_to_string(scores, labels, self.index_to_char)
@@ -334,7 +335,7 @@ class TrainNNPrep():
 
                 training_loss += loss.item()
                 if step % self.iter_interval == 0:
-                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}, JVP loss: {jvp_loss_temp}")
+                    print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}")
                 step += 1 
                 
                 if self.selection_method and len(img_preds_names):
@@ -342,13 +343,10 @@ class TrainNNPrep():
                     for i in range(len(labels)):
                         _, batch_cer = compare_labels([model_gen_labels[i]], [labels[i]])
                         batch_cers.append(batch_cer)
-                    self.sampler.update_cer(batch_cers, img_preds_names)
+                    self.sampler.update_cer(batch_cers, names)
 
             
             train_loss =  training_loss / (self.train_set_size//self.train_batch_size)
-            if self.jvp_jitter:
-                jvp_loss = jvp_loss / (self.train_set_size//self.train_batch_size)
-                writer.add_scalar('Jvp Loss', jvp_loss, epoch + 1) 
             writer.add_scalar('Training Loss', train_loss, epoch + 1) # Change to batch size if not randomly sampling from mini-batches
 
             if self.selection_method: 
@@ -359,8 +357,9 @@ class TrainNNPrep():
             with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
                 json.dump(self.tracked_labels, f)
                 
-            with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
-                json.dump(self.sampler.cers, f)
+            if self.selection_method:
+                with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
+                    json.dump(self.sampler.cers, f)
 
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
             wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
@@ -437,7 +436,6 @@ class TrainNNPrep():
                                                                                (self.train_set_size //
                                                                                 self.train_batch_size),
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
-            print(f"JVP loss: {jvp_loss/(self.train_set_size//self.train_batch_size)}")
             torch.save(self.prep_model,
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model, os.path.join(self.ckpt_base_path,
@@ -464,7 +462,7 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', type=int,
                         default=50, help='number of epochs')
     parser.add_argument('--warmup_epochs', type=int,
-                        default=3, help='number of warmup epochs')
+                        default=0, help='number of warmup epochs')
     parser.add_argument('--std', type=int,
                         default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
@@ -488,7 +486,7 @@ if __name__ == "__main__":
                         help='Base path to save model checkpoints. Defaults to properties path')
     parser.add_argument('--exp_base_path', default=".",
                         help='Base path for experiment. Defaults to current directory')
-    parser.add_argument('--minibatch_subset',  choices=['random', 'importance'], 
+    parser.add_argument('--minibatch_subset', 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
@@ -511,6 +509,8 @@ if __name__ == "__main__":
                             help="Lamda for maintaining exponential average of sample information")
     parser.add_argument('--cers_ocr_path',
                             help="Cer information json")
+
+    
     
     args = parser.parse_args()
     # Conditions on arguments

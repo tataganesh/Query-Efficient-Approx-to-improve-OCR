@@ -26,7 +26,7 @@ def generate_ctc_target_batches(self, img_names):
                 batch_labels.append(ocr_label)
                 img_indices.append(j)
         if len(img_indices):
-            target, target_size = self.generate_ctc_label(batch_labels)
+            target, target_size = generate_ctc_label(self, batch_labels)
             target_batches.append([target, target_size, img_indices])
     return target_batches
 
