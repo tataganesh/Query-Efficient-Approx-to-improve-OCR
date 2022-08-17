@@ -412,8 +412,12 @@ class TrainNNPrep():
                     json.dump(self.tracked_labels, f)
             with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
                 json.dump(self.tracked_labels, f)
+                
+            with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
+                json.dump(self.sampler.cers, f)
 
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
+            wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
 
             # self.cer_per_epoch[:, epoch] = np.array(list(self.sampler.cers.values()))
             print(f"Epoch BB calls - {epoch_bb_calls}")
