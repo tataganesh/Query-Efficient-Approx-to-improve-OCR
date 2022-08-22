@@ -221,10 +221,12 @@ class TrainNNPrep():
         validation_step = 0
         jvp_train_cer = 0
         total_bb_calls = 0
+        total_crnn_updates = 0
         self.crnn_model.zero_grad()
         
         for epoch in range(self.start_epoch, self.max_epochs):
             epoch_bb_calls = 0
+            epoch_crnn_updates = 0
             step = 0
             training_loss = 0
             jvp_loss = 0
@@ -249,6 +251,12 @@ class TrainNNPrep():
 
                     img_preds = img_preds.detach().cpu()
                     img_preds_names = [names[index] for index in bb_sample_indices]
+                    skipped_indices_mask = torch.ones(indices.shape[0], dtype=bool)
+                    skipped_indices_mask[bb_sample_indices] = False
+                    skipped_indices = indices[skipped_indices_mask]
+                    skipped_images = img_preds_all[skipped_indices_mask]
+                    skipped_img_names = [names[index] for index in skipped_indices]
+                    
                     # img_preds_skipped = img_preds_all[batch_indices_skipped]
                     # labels_skipped = [labels[l] for l in batch_indices_skipped]
                     # model_labels_last = [self.model_labels_last[i] for i in indices_skipped]
@@ -288,12 +296,22 @@ class TrainNNPrep():
                             ocr_labels = self.ocr.get_labels(img_preds)
                             # Only required if OCR is called, to append to the existing history
                             add_labels_to_history(self, img_preds_names, ocr_labels)
+                            
+                            history_present_indices = [idx for idx in skipped_indices if skipped_img_names[idx] in self.tracked_labels and self.tracked_labels[skipped_img_names[idx]]]
+                            if history_present_indices:
+                                extra_img_names = [skipped_img_names[idx] for idx in history_present_indices]
+                                img_preds_names.extend(extra_img_names)
+                                extra_imgs = skipped_images[history_present_indices]
+                                img_preds = torch.cat([img_preds, extra_imgs])
+                                
                             # Peek at history of OCR labels for each strip and construct weighted CTC loss
                             target_batches = generate_ctc_target_batches(self, img_preds_names)
                             scores, pred_size = call_crnn(self, img_preds)
                             loss = weighted_ctc_loss(self, scores, pred_size, target_batches)
                             total_bb_calls += len(ocr_labels)
                             epoch_bb_calls += len(ocr_labels)
+                            total_crnn_updates += len(history_present_indices)
+                            epoch_crnn_updates += len(history_present_indices)
                         else:
                             noisy_imgs, noise = self.add_noise(img_preds, noiser)
                             ocr_labels = self.ocr.get_labels(noisy_imgs)
@@ -418,7 +436,8 @@ class TrainNNPrep():
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
                         "train_loss": train_loss, "val_loss": val_loss,
-                        "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls})
+                        "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls,
+                        "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates})
 
             
             save_img(img_preds.cpu(), 'out_' +
