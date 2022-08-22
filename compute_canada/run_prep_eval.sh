@@ -3,7 +3,7 @@ source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 
 
-EXP_ID=57
+EXP_ID=137
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="vgg"
 # if [ ! -d $DATA_PATH ]
@@ -20,7 +20,8 @@ DATASET_NAME="vgg"
 # source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 DATA_PATH="$SLURM_TMPDIR/data"
-DATASET_NAME="patch_dataset"
+# DATASET_NAME="patch_dataset"
+DATASET_NAME="vgg"
 if [ ! -d $DATA_PATH ]
 then
     echo "$DATASET_NAME Dataset extraction started"
@@ -38,8 +39,8 @@ cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 # cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 # [ ! -f "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/Prep_model_4" ] && echo "File not found!" 
-for i in 41
+for i in 35 43 45
 do
     echo "Running $i preprocessor"
-    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_87/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/" --dataset vgg  --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
 done
