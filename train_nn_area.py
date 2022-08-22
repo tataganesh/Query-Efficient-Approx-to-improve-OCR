@@ -55,7 +55,6 @@ class TrainNNPrep():
         self.std = args.std
         self.is_random_std = args.random_std
         self.iter_interval = args.print_iter
-        self.ckpt_base_path = args.ckpt_base_path
         self.inner_limit_skip = args.inner_limit_skip
         # self.tensorboard_log_path = args.tb_log_path
         self.jvp_jitter = args.jvp_jitter
@@ -322,10 +321,11 @@ class TrainNNPrep():
                             total_bb_calls += img_preds.shape[0]
                             epoch_bb_calls += img_preds.shape[0]
 
-                    temp_loss += loss.item()
-                    loss.backward()
-
-                CRNN_training_loss = temp_loss/self.inner_limit
+                    if self.inner_limit:
+                        temp_loss += loss.item()
+                        loss.backward()
+                inner_limit = max(1, self.inner_limit)
+                CRNN_training_loss = temp_loss/inner_limit
                 self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
                                   CRNN_training_loss, step)
@@ -501,8 +501,6 @@ if __name__ == "__main__":
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
     parser.add_argument('--print_iter', type=int,
                         default=100, help='Interval for printing iterations per Epoch')
-    parser.add_argument('--ckpt_base_path', default=properties.prep_model_path,
-                        help='Base path to save model checkpoints. Defaults to properties path')
     parser.add_argument('--exp_base_path', default=".",
                         help='Base path for experiment. Defaults to current directory')
     parser.add_argument('--minibatch_subset', 
@@ -533,8 +531,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     # Conditions on arguments
-    if args.inner_limit < 1:
-        parser.error("Minimum Value for Inner Limit is 1")
+    # if args.inner_limit < 1:
+    #     parser.error("Minimum Value for Inner Limit is 1")
     print(vars(args))
     wandb.config.update(vars(args))
     wandb.run.name = f"{args.exp_name}"
