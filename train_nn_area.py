@@ -1,9 +1,9 @@
 import datetime
-from socket import IOCTL_VM_SOCKETS_GET_LOCAL_CID
 import torch
 import argparse
 import os
 import math
+import random
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
@@ -56,9 +56,8 @@ class TrainNNPrep():
         self.is_random_std = args.random_std
         self.iter_interval = args.print_iter
         self.inner_limit_skip = args.inner_limit_skip
+        self.crnn_imputation = args.crnn_imputation
         # self.tensorboard_log_path = args.tb_log_path
-        self.jvp_jitter = args.jvp_jitter
-        self.gradient_weighting = args.gradient_weighting
         torch.manual_seed(42)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
@@ -88,8 +87,8 @@ class TrainNNPrep():
         
         if self.cers:
             self.tracked_labels = {name: [] for name in self.cers.keys()}
-            # self.ctc_loss_weights = [0.5, 0.25, 0.15, 0.07, 0.03]
-            self.ctc_loss_weights = [1, 0.7, 0.4, 0.2, 0.1]
+            self.ctc_loss_weights_noocr = torch.tensor([0.5, 0.25, 0.15, 0.07, 0.03])
+            self.ctc_loss_weights = torch.tensor([1, 0.7, 0.4, 0.2, 0.1])
             self.window_size = len(self.ctc_loss_weights)
             
         self.input_size = properties.input_size
@@ -146,7 +145,6 @@ class TrainNNPrep():
         self.val_set_size = len(self.loader_validation.dataset)
         self.sample_importance = torch.ones(self.train_set_size)/10.0
         self.sample_frequency = torch.zeros((self.train_set_size, self.max_epochs, 2))
-        self.lamda = args.history_lamda
 
         self.primary_loss_fn = CTCLoss().to(self.device)
         self.primary_loss_fn_sample_wise = CTCLoss(reduction='none').to(self.device)
@@ -250,33 +248,9 @@ class TrainNNPrep():
 
                     img_preds = img_preds.detach().cpu()
                     img_preds_names = [names[index] for index in bb_sample_indices]
-                    skipped_indices_mask = torch.ones(indices.shape[0], dtype=bool)
-                    skipped_indices_mask[bb_sample_indices] = False
-                    skipped_indices = indices[skipped_indices_mask]
-                    skipped_images = img_preds_all[skipped_indices_mask]
-                    skipped_img_names = [names[index] for index in skipped_indices]
+                    skipped_mask = torch.ones(indices.shape[0], dtype=bool)
+                    skipped_mask[bb_sample_indices] = False
                     
-                    # img_preds_skipped = img_preds_all[batch_indices_skipped]
-                    # labels_skipped = [labels[l] for l in batch_indices_skipped]
-                    # model_labels_last = [self.model_labels_last[i] for i in indices_skipped]
-                    # orig_indices_mask = torch.ones(indices.shape[0], dtype=bool)
-                    # orig_indices_mask[batch_indices_skipped] = False
-                    # indices = indices_all[orig_indices_mask].long()
-                    # img_preds = img_preds_all[orig_indices_mask].detach().cpu() 
-                    # Combine GT and prev model predictions
-                    # half_labels_skipped = int(self.num_samples_skipped/2)
-                    # gt_self_labels = list()
-                    # rand_label_indices = torch.randperm(self.num_samples_skipped)
-                    # gt_self_labels = [labels_skipped[i] for i in rand_label_indices[:half_labels_skipped]]
-                    # gt_self_labels.extend([model_labels_last[i] for i in rand_label_indices[half_labels_skipped:]])
-                    # img_preds_skipped = img_preds_skipped[rand_label_indices]
-                    # pprint(list(zip([model_labels_last[i] for i in rand_label_indices], [labels_skipped[i] for i in rand_label_indices], gt_self_labels)))
-                    # scores, y, pred_size, y_size = self._call_model(
-                    #     img_preds_skipped, gt_self_labels)
-                    
-                    # loss = self.primary_loss_fn(scores, y, pred_size, y_size)
-                    # loss.backward()
-                    # print(f"Skipped Samples - {img_preds_skipped.shape[0]}")
                 else:
                     img_preds = img_preds_all.detach().cpu() 
                     img_preds_names = names
@@ -296,17 +270,23 @@ class TrainNNPrep():
                             # Only required if OCR is called, to append to the existing history
                             add_labels_to_history(self, img_preds_names, ocr_labels)
                             
-                            history_present_indices = [idx for idx in skipped_indices if skipped_img_names[idx] in self.tracked_labels and self.tracked_labels[skipped_img_names[idx]]]
-                            if history_present_indices:
-                                extra_img_names = [skipped_img_names[idx] for idx in history_present_indices]
+                            history_present_indices = [idx for idx, name in enumerate(names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
+                            loss_weights = None
+                            if history_present_indices and self.crnn_imputation:
+                                history_present_indices = random.sample(history_present_indices, min(len(ocr_labels), len(history_present_indices))) # Sample equal to number of ocr calls
+                                extra_img_names = [names[idx] for idx in history_present_indices]
                                 img_preds_names.extend(extra_img_names)
-                                extra_imgs = skipped_images[history_present_indices]
-                                img_preds = torch.cat([img_preds, extra_imgs])
-                                
+                                extra_imgs = img_preds_all[history_present_indices]
+                                img_preds = torch.cat([img_preds.to(self.device), extra_imgs])
+                                loss_weights = torch.zeros(img_preds.shape[0], self.window_size)
+                                loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
+                                loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
+                                loss_weights = loss_weights.to(self.device)
+
                             # Peek at history of OCR labels for each strip and construct weighted CTC loss
                             target_batches = generate_ctc_target_batches(self, img_preds_names)
                             scores, pred_size = call_crnn(self, img_preds)
-                            loss = weighted_ctc_loss(self, scores, pred_size, target_batches)
+                            loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
                             total_bb_calls += len(ocr_labels)
                             epoch_bb_calls += len(ocr_labels)
                             total_crnn_updates += len(history_present_indices)
@@ -509,23 +489,18 @@ if __name__ == "__main__":
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
     parser.add_argument('--start_epoch', type=int, default=0,
                         help='Starting epoch. If loading from a ckpt, pass the ckpt epoch here.')
-    parser.add_argument('--jvp_jitter', help="Apply JVP noise jitter. If this is True, black-box outputs for jittered inputs will not be computed. \
-                            The function space around the black-box will not be explord.", action="store_true")
     parser.add_argument('--train_subset_size', help="Subset of training size to use", type=int)
     parser.add_argument('--val_subset_size',
                             help="Subset of val size to use", type=int)
     parser.add_argument('--lr_scheduler',
                             help="Specify scheduler to be used")
-    parser.add_argument('--exp_name', default="jvp_jitter",
+    parser.add_argument('--exp_name', default="default_exp",
                             help="Specify name of experiment (JVP Jitter, Sample Dropping Etc.)")
     parser.add_argument('--exp_id',
                         help="Specify unique experiment ID")
-    parser.add_argument('--history_lamda', default=0.1, type=float, 
-                            help="Lamda for maintaining exponential average of sample information")
-    parser.add_argument('--gradient_weighting', action="store_true", 
-                            help="Lamda for maintaining exponential average of sample information")
     parser.add_argument('--cers_ocr_path',
                             help="Cer information json")
+    parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
 
     
     

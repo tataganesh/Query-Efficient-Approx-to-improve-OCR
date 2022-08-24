@@ -30,16 +30,21 @@ def generate_ctc_target_batches(self, img_names):
             target_batches.append([target, target_size, img_indices])
     return target_batches
 
-def weighted_ctc_loss(self, scores, pred_size, target_batches):
+def weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights=None):
     num_losses = min(len(target_batches), self.window_size)
     all_ctc_losses = list()
     for i in range(num_losses):
         target, target_size, img_indices = target_batches[i]
-        loss_weight = self.ctc_loss_weights[i]
         scores_subset = scores[:, img_indices, :]
         pred_size_subset = pred_size[img_indices]
-        ctc_loss = self.primary_loss_fn(scores_subset, target, pred_size_subset, target_size)
-        all_ctc_losses.append(loss_weight*ctc_loss)
+        if loss_weights is None:
+            loss_weight = self.ctc_loss_weights[i]
+            ctc_loss = self.primary_loss_fn(scores_subset, target, pred_size_subset, target_size)
+            all_ctc_losses.append(loss_weight*ctc_loss)
+        else:
+            loss_weights_subset = loss_weights[img_indices, i]
+            ctc_losses = self.primary_loss_fn_sample_wise(scores_subset, target, pred_size_subset, target_size)
+            all_ctc_losses.append(torch.mean(loss_weights_subset*ctc_losses))
     return sum(all_ctc_losses)
 
 def add_labels_to_history(self, image_keys, ocr_labels):
