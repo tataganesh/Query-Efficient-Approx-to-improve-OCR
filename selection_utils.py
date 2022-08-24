@@ -104,7 +104,6 @@ class CerRangeSampler(DataSampler):
             if name in self.cers:
                 image_cers.append(self.cers[name])
         image_cers = torch.tensor(image_cers)
-        print(image_cers)
         if image_cers.shape[0] != 0:
             cer_random_points = (image_cers.max() - image_cers.min()) * torch.rand(num_samples) + image_cers.min()
             # cer_diff = torch.abs(image_cers.unsqueeze(1) - cer_random_points.unsqueeze(0))
