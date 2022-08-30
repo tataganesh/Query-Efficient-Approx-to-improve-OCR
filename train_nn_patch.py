@@ -16,6 +16,7 @@ import torchvision.transforms as transforms
 
 from models.model_crnn import CRNN
 from models.model_unet import UNet
+from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history
 from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs
 from utils import get_text_stack, get_ocr_helper, compare_labels
@@ -54,7 +55,6 @@ class TrainNNPrep():
         self.std = args.std
         self.is_random_std = args.random_std
         self.label_impute = args.label_impute
-        self.softlabel_tracking_prob = args.softlabel_tracking_prob
         torch.manual_seed(self.random_seed)
         python_random.seed(self.random_seed)
         np.random.seed(self.random_seed)
@@ -64,6 +64,7 @@ class TrainNNPrep():
         self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
         self.selection_method = args.minibatch_subset
+        self.crnn_imputation = args.crnn_imputation
 
         self.train_batch_prop = 1
     
@@ -94,8 +95,8 @@ class TrainNNPrep():
 
         if self.cers:
             self.tracked_labels = {name: [] for name in self.cers.keys()}
-            # self.ctc_loss_weights = [0.5, 0.25, 0.15, 0.07, 0.03]
-            self.ctc_loss_weights = [1, 0.7, 0.4, 0.2, 0.1]
+            self.ctc_loss_weights_noocr = torch.tensor([0.5, 0.25, 0.15, 0.07, 0.03])
+            self.ctc_loss_weights = torch.tensor([1, 0.7, 0.4, 0.2, 0.1])
             self.window_size = len(self.ctc_loss_weights)
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
@@ -156,53 +157,53 @@ class TrainNNPrep():
         y_var = torch.tensor(y, dtype=torch.int)
         return scores, y_var, out_size, y_size
 
-    def call_crnn(self, images):
-        X_var = images.to(self.device)
-        scores = self.crnn_model(X_var)
-        out_size = torch.tensor(
-            [scores.shape[0]] * images.shape[0], dtype=torch.int)
-        return scores, out_size
+    # def call_crnn(self, images):
+    #     X_var = images.to(self.device)
+    #     scores = self.crnn_model(X_var)
+    #     out_size = torch.tensor(
+    #         [scores.shape[0]] * images.shape[0], dtype=torch.int)
+    #     return scores, out_size
     
-    def generate_ctc_label(self, labels):
-        y_size = torch.tensor([len(l) for l in labels], dtype=torch.int)
-        conc_label = ''.join(labels)
-        y = [self.char_to_index[c] for c in conc_label]
-        y_var = torch.tensor(y, dtype=torch.int)
-        return y_var, y_size
+    # def generate_ctc_label(self, labels):
+    #     y_size = torch.tensor([len(l) for l in labels], dtype=torch.int)
+    #     conc_label = ''.join(labels)
+    #     y = [self.char_to_index[c] for c in conc_label]
+    #     y_var = torch.tensor(y, dtype=torch.int)
+    #     return y_var, y_size
     
-    def generate_ctc_target_batches(self, img_names):
-        target_batches = list()
-        for i in range(self.window_size):
-            batch_labels = list()
-            img_indices = list()
-            for j, name in enumerate(img_names):
-                label_history = self.tracked_labels[name]
-                if i < len(label_history):
-                    ocr_label = label_history[-(i+1)] # ith index from the back
-                    batch_labels.append(ocr_label)
-                    img_indices.append(j)
-            if len(img_indices):
-                target, target_size = self.generate_ctc_label(batch_labels)
-                target_batches.append([target, target_size, img_indices])
-        return target_batches
+    # def generate_ctc_target_batches(self, img_names):
+    #     target_batches = list()
+    #     for i in range(self.window_size):
+    #         batch_labels = list()
+    #         img_indices = list()
+    #         for j, name in enumerate(img_names):
+    #             label_history = self.tracked_labels[name]
+    #             if i < len(label_history):
+    #                 ocr_label = label_history[-(i+1)] # ith index from the back
+    #                 batch_labels.append(ocr_label)
+    #                 img_indices.append(j)
+    #         if len(img_indices):
+    #             target, target_size = self.generate_ctc_label(batch_labels)
+    #             target_batches.append([target, target_size, img_indices])
+    #     return target_batches
     
-    def weighted_ctc_loss(self, scores, pred_size, target_batches):
-        num_losses = min(len(target_batches), self.window_size)
-        all_ctc_losses = list()
-        for i in range(num_losses):
-            target, target_size, img_indices = target_batches[i]
-            loss_weight = self.ctc_loss_weights[i]
-            scores_subset = scores[:, img_indices, :]
-            pred_size_subset = pred_size[img_indices]
-            ctc_loss = self.primary_loss_fn(scores_subset, target, pred_size_subset, target_size)
-            all_ctc_losses.append(loss_weight*ctc_loss)
-        return sum(all_ctc_losses)
+    # def weighted_ctc_loss(self, scores, pred_size, target_batches):
+    #     num_losses = min(len(target_batches), self.window_size)
+    #     all_ctc_losses = list()
+    #     for i in range(num_losses):
+    #         target, target_size, img_indices = target_batches[i]
+    #         loss_weight = self.ctc_loss_weights[i]
+    #         scores_subset = scores[:, img_indices, :]
+    #         pred_size_subset = pred_size[img_indices]
+    #         ctc_loss = self.primary_loss_fn(scores_subset, target, pred_size_subset, target_size)
+    #         all_ctc_losses.append(loss_weight*ctc_loss)
+    #     return sum(all_ctc_losses)
 
-    def add_labels_to_history(self, image_keys, ocr_labels):
-        for lbl_index, name in  enumerate(image_keys): 
-            if name not in self.tracked_labels:
-                self.tracked_labels[name] = list() # Why is this required?
-            self.tracked_labels[name].append(ocr_labels[lbl_index])
+    # def add_labels_to_history(self, image_keys, ocr_labels):
+    #     for lbl_index, name in  enumerate(image_keys): 
+    #         if name not in self.tracked_labels:
+    #             self.tracked_labels[name] = list() # Why is this required?
+    #         self.tracked_labels[name].append(ocr_labels[lbl_index])
 
     def _get_loss(self, scores, y, pred_size, y_size, img_preds):
         pri_loss = self.primary_loss_fn(scores, y, pred_size, y_size)
@@ -228,6 +229,7 @@ class TrainNNPrep():
         validation_step = 0
         batch_step = 0
         total_bb_calls = 0
+        total_crnn_updates = 0
 
 
         for epoch in range(self.start_epoch, self.max_epochs):
@@ -237,7 +239,7 @@ class TrainNNPrep():
             training_loss = 0
             epoch_print_flag = True
             epoch_bb_calls = 0
-            # epoch_prop = 
+            epoch_crnn_updates = 0
             if self.num_subset_images:
                 print(f"Total images - {self.train_set_size}, Subset Images - {self.num_subset_images}")
                 random_indices = torch.randperm(self.train_set_size)[:self.num_subset_images]
@@ -281,10 +283,11 @@ class TrainNNPrep():
                         text_crops = text_crops.detach().cpu()
                         text_crop_names = [text_strip_names[index] for index in bb_sample_indices]
 
-                        skipped_crops_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
-                        skipped_crops_mask[bb_sample_indices] = False
-                        skipped_text_crops = text_crops_all[skipped_crops_mask]
-                        labels_skipped = [labels[i] for i in range(skipped_crops_mask.shape[0]) if skipped_crops_mask[i]]
+                        skipped_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
+                        skipped_mask[bb_sample_indices] = False
+                        
+                        skipped_text_crops = text_crops_all[skipped_mask]
+                        labels_skipped = [labels[i] for i in range(skipped_mask.shape[0]) if skipped_mask[i]]
 
                         if self.label_impute: # Move this to another function
                             model_lab_last_batch = [self.model_labels_last[name + "_" + str(i.item())] for i in sample_indices]
@@ -318,25 +321,27 @@ class TrainNNPrep():
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
                             if i == 0 and self.inner_limit_skip: # Skip adding noise to one of the inner loops
-                                noisy_imgs = text_crops
-                                # Get indices of text strips for which history is not present
-                                history_not_present_indices = [txt_idx for txt_idx, name in enumerate(text_crop_names) if name not in self.tracked_labels or not self.tracked_labels[name]]
-                                ocr_labels = []
-                                text_crop_names_ocr = text_crop_names
-                                # With 50% probability, call the black-box, else use tracking for soft labels
-                                if torch.rand(1).item() < self.softlabel_tracking_prob:
-                                    if history_not_present_indices:
-                                        ocr_labels = self.ocr.get_labels(noisy_imgs[history_not_present_indices])
-                                        text_crop_names_ocr = [text_crop_names[idx] for idx in history_not_present_indices]
-                                else:
-                                    ocr_labels = self.ocr.get_labels(noisy_imgs)
-                                # Only required if OCR is called, to append to the existing history
-                                if ocr_labels:
-                                    self.add_labels_to_history(text_crop_names_ocr, ocr_labels)
+                                ocr_labels = self.ocr.get_labels(text_crops)
+                                add_labels_to_history(self, text_crop_names, ocr_labels)                            
+                                history_present_indices = [idx for idx, name in enumerate(text_strip_names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
+                                loss_weights = None
+                                if history_present_indices and self.crnn_imputation:
+                                    history_present_indices = python_random.sample(history_present_indices, min(len(ocr_labels), len(history_present_indices))) # Sample equal to number of ocr calls
+                                    extra_img_names = [text_strip_names[idx] for idx in history_present_indices]
+                                    text_crop_names.extend(extra_img_names)
+                                    extra_imgs = text_crops_all[history_present_indices]
+                                    text_crops = torch.cat([text_crops.to(self.device), extra_imgs])
+                                    loss_weights = torch.zeros(text_crops.shape[0], self.window_size)
+                                    loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
+                                    loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
+                                    loss_weights = loss_weights.to(self.device)
+                                    total_crnn_updates += len(history_present_indices)
+                                    epoch_crnn_updates += len(history_present_indices)
+
                                 # Peek at history of OCR labels for each strip and construct weighted CTC loss
-                                target_batches = self.generate_ctc_target_batches(text_crop_names)
-                                scores, pred_size = self.call_crnn(noisy_imgs)
-                                loss = self.weighted_ctc_loss(scores, pred_size, target_batches)
+                                target_batches = generate_ctc_target_batches(self, text_crop_names)
+                                scores, pred_size = call_crnn(self, text_crops)
+                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
                                 total_bb_calls += len(ocr_labels)
                                 epoch_bb_calls += len(ocr_labels)
                             else:
@@ -472,7 +477,9 @@ class TrainNNPrep():
 
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                     "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
-                    "train_loss": train_loss, "val_loss": val_loss, "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls})
+                    "train_loss": train_loss, "val_loss": val_loss, 
+                    "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls,
+                    "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates})
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
             # img.save(properties.img_out_path+'out_'+str(epoch)+'.png', 'PNG')
@@ -493,8 +500,6 @@ class TrainNNPrep():
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
-        # epochs_cer_tbl = wandb.Table(data=self.cer_per_epoch.tolist(), columns=list(range(self.cer_per_epoch.shape[1])))
-        # wandb.log({"CER Values": epochs_cer_tbl})
 
         writer.flush()
         writer.close()
@@ -556,8 +561,8 @@ if __name__ == "__main__":
                             help="Cer information json")
     parser.add_argument('--image_prop', help="Percentage of images per epoch", type=float)
     parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
-    parser.add_argument('--softlabel_tracking_prob',
-                            help="Probability to not call OCR and used track labels to update approximator.", type=float, default=0)
+    parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
+
     args = parser.parse_args()
     print(args)
     wandb.config.update(vars(args))
