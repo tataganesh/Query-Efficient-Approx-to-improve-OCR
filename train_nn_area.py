@@ -157,7 +157,7 @@ class TrainNNPrep():
         self.lr_scheduler = args.lr_scheduler 
         if self.lr_scheduler == "cosine":
             self.scheduler_crnn = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_crnn, T_max=self.max_epochs)
-            self.scheduler_prep = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_prep, T_max=self.max_epochs)
+            # self.scheduler_prep = optim.lr_scheduler.CosineAnnealingLR(self.optimizer_prep, T_max=self.max_epochs)
 
     def _call_model(self, images, labels):
         X_var = images.to(self.device)
@@ -282,6 +282,8 @@ class TrainNNPrep():
                                 loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
                                 loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
                                 loss_weights = loss_weights.to(self.device)
+                                total_crnn_updates += len(history_present_indices)
+                                epoch_crnn_updates += len(history_present_indices)
 
                             # Peek at history of OCR labels for each strip and construct weighted CTC loss
                             target_batches = generate_ctc_target_batches(self, img_preds_names)
@@ -289,8 +291,6 @@ class TrainNNPrep():
                             loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
                             total_bb_calls += len(ocr_labels)
                             epoch_bb_calls += len(ocr_labels)
-                            total_crnn_updates += len(history_present_indices)
-                            epoch_crnn_updates += len(history_present_indices)
                         else:
                             noisy_imgs, noise = self.add_noise(img_preds, noiser)
                             ocr_labels = self.ocr.get_labels(noisy_imgs)
@@ -362,10 +362,11 @@ class TrainNNPrep():
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
             wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
 
-
+            current_lr = self.lr_crnn
             if self.lr_scheduler:
                 self.scheduler_crnn.step()
-                self.scheduler_prep.step()
+                current_lr = self.scheduler_crnn.get_lr()
+                # self.scheduler_prep.step()
             self.prep_model.eval()
             self.crnn_model.eval()
             pred_correct_count = 0
@@ -417,7 +418,8 @@ class TrainNNPrep():
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
                         "train_loss": train_loss, "val_loss": val_loss,
                         "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls,
-                        "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates})
+                        "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates,
+                        "Learning Rate": current_lr})
 
             
             save_img(img_preds.cpu(), 'out_' +
