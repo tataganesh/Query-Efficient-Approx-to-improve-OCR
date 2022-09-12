@@ -49,7 +49,8 @@ class TrainNNPrep():
         self.tensorboard_log_path = os.path.join(self.exp_base_path, properties.prep_tensor_board)
         self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
         create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path])
-
+        
+        self.random_seed = args.random_seed
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
         self.std = args.std
@@ -57,8 +58,9 @@ class TrainNNPrep():
         self.iter_interval = args.print_iter
         self.inner_limit_skip = args.inner_limit_skip
         self.crnn_imputation = args.crnn_imputation
+        self.time_decay = args.time_decay
         # self.tensorboard_log_path = args.tb_log_path
-        torch.manual_seed(42)
+        torch.manual_seed(self.random_seed)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
         self.validation_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
         self.start_epoch = args.start_epoch
@@ -71,7 +73,6 @@ class TrainNNPrep():
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
         self.track_importance = pd.DataFrame()
-        # self.model_preds_last = torch.zeros((self.train_subset_size, 50))
         
         self.cers = None
         if args.cers_ocr_path:
@@ -87,6 +88,7 @@ class TrainNNPrep():
         
         if self.cers:
             self.tracked_labels = {name: [] for name in self.cers.keys()}
+            self.tracked_lbl_epochs = {name: [] for name in self.cers.keys()}
             self.ctc_loss_weights_noocr = torch.tensor([0.5, 0.25, 0.15, 0.07, 0.03])
             self.ctc_loss_weights = torch.tensor([1, 0.7, 0.4, 0.2, 0.1])
             self.window_size = len(self.ctc_loss_weights)
@@ -118,28 +120,18 @@ class TrainNNPrep():
             transforms.ToTensor(),
         ])
         self.dataset = ImgDataset(
-            self.train_set, transform=transform, include_name=True, include_index=True)
+            self.train_set, transform=transform, include_name=True, include_index=True, num_subset=self.train_subset_size)
         self.validation_set = ImgDataset(
-            self.validation_set, transform=transform, include_name=True)
+            self.validation_set, transform=transform, include_name=True, num_subset=self.val_subset_size)
 
 
-        if not self.train_subset_size:
-            self.train_subset_size = len(self.dataset)
-        self.model_labels_last = ["" for _ in range(0, self.train_subset_size)]
-        rand_indices = torch.randperm(len(self.dataset))[:self.train_subset_size]
-        self.train_subset_index_mapping = torch.zeros(len(self.dataset))
-        self.train_subset_index_mapping[rand_indices] = torch.arange(0, self.train_subset_size).float()
-        self.dataset_subset = torch.utils.data.Subset(self.dataset, rand_indices)
+
         self.loader_train = torch.utils.data.DataLoader(
-            self.dataset_subset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+            self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
 
         
-        if not self.val_subset_size:
-            self.val_subset_size = len(self.validation_set)
-        rand_indices = torch.randperm(len(self.validation_set))[:self.val_subset_size]
-        validation_set_subset = torch.utils.data.Subset(self.validation_set, rand_indices)
         self.loader_validation = torch.utils.data.DataLoader(
-            validation_set_subset, batch_size=self.batch_size, drop_last=True)
+            self.validation_set, batch_size=self.batch_size, drop_last=True)
 
         self.train_set_size = len(self.loader_train.dataset)
         self.val_set_size = len(self.loader_validation.dataset)
@@ -241,7 +233,6 @@ class TrainNNPrep():
                 noisy_imgs_list = list()
                 noisy_labels_list = list()
                 # jitter_noise_list = list()
-                indices_all = self.train_subset_index_mapping[indices].long()
                 if self.selection_method and epoch >= self.warmup_epochs:
                     num_bb_samples = max(1, math.ceil(img_preds_all.shape[0]*(1 - self.train_batch_prop)))
                     img_preds, labels_gt, bb_sample_indices = self.sampler.query(img_preds_all, labels, num_bb_samples, names)
@@ -254,7 +245,6 @@ class TrainNNPrep():
                 else:
                     img_preds = img_preds_all.detach().cpu() 
                     img_preds_names = names
-                    indices = indices_all
                     
                     # Compute Loss
                     # primary_loss_fn_sample_wise(scores, y, pred_size, y_size)
@@ -268,7 +258,7 @@ class TrainNNPrep():
                         if i == 0 and self.inner_limit_skip:
                             ocr_labels = self.ocr.get_labels(img_preds)
                             # Only required if OCR is called, to append to the existing history
-                            add_labels_to_history(self, img_preds_names, ocr_labels)
+                            add_labels_to_history(self, img_preds_names, ocr_labels, epoch)
                             
                             history_present_indices = [idx for idx, name in enumerate(names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
                             loss_weights = None
@@ -281,6 +271,15 @@ class TrainNNPrep():
                                 loss_weights = torch.zeros(img_preds.shape[0], self.window_size)
                                 loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
                                 loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
+                                total_crnn_updates += len(history_present_indices)
+                                epoch_crnn_updates += len(history_present_indices)
+                            if self.time_decay:
+                                loss_weights = torch.zeros(img_preds.shape[0], self.window_size)
+                                loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
+                                for index, strip_name in enumerate(img_preds_names):
+                                    epoch_dist = [(epoch - element_epoch) for element_epoch in self.tracked_lbl_epochs[strip_name][::-1][:self.window_size]]
+                                    for j in range(len(epoch_dist)):
+                                            loss_weights[index, j] = loss_weights[index, j] * (self.time_decay**epoch_dist[j])
                                 loss_weights = loss_weights.to(self.device)
 
                             # Peek at history of OCR labels for each strip and construct weighted CTC loss
@@ -289,8 +288,7 @@ class TrainNNPrep():
                             loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
                             total_bb_calls += len(ocr_labels)
                             epoch_bb_calls += len(ocr_labels)
-                            total_crnn_updates += len(history_present_indices)
-                            epoch_crnn_updates += len(history_present_indices)
+
                         else:
                             noisy_imgs, noise = self.add_noise(img_preds, noiser)
                             ocr_labels = self.ocr.get_labels(noisy_imgs)
@@ -322,22 +320,15 @@ class TrainNNPrep():
                 loss = self._get_loss(scores, y, pred_size, y_size, img_preds)
                 loss.backward()
                 self.optimizer_prep.step()
-
-                #print(f"Preprocessor total samples - {img_preds.shape[0]}")
-
-                # Update last seen prediction of image
-                model_gen_labels = pred_to_string(scores, labels, self.index_to_char)
-                
-                for i, index in enumerate(indices_all):
-                    self.model_labels_last[index.item()] = model_gen_labels[i]
-
                 training_loss += loss.item()
+
                 if step % self.iter_interval == 0:
                     print(f"Epoch: {epoch}, Iteration: {step} => {loss.item()}")
                 step += 1 
                 
                 if self.selection_method and len(img_preds_names):
                     batch_cers = list()
+                    model_gen_labels = pred_to_string(scores, labels, self.index_to_char)
                     for i in range(len(labels)):
                         _, batch_cer = compare_labels([model_gen_labels[i]], [labels[i]])
                         batch_cers.append(batch_cer)
@@ -407,12 +398,6 @@ class TrainNNPrep():
                               OCR_cer, epoch + 1)
             writer.add_scalar('Validation Loss', val_loss, epoch + 1)
 
-            # self.track_importance["File Name"] = [name for image, label, name, indice in self.dataset_subset]
-            # self.track_importance["Importance (Loss)"] = self.sample_importance.detach().numpy()
-            # self.track_importance.to_csv(os.path.join(self.exp_base_path, "Sample_Data_Importance_loss.csv"))
-            # sample_importance_table = wandb.Table(dataframe=self.track_importance)
-            # torch.save(self.sample_frequency, os.path.join(self.exp_base_path, "Sample_Frequency.pt"))
-
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                         "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
                         "train_loss": train_loss, "val_loss": val_loss,
@@ -477,6 +462,8 @@ if __name__ == "__main__":
                         help='Base path training, validation and test data', default=".")
     parser.add_argument('--ocr', default='Tesseract',
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
+    parser.add_argument('--random_seed',
+                            help="Random seed for experiment", type=int, default=42)
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
     parser.add_argument('--print_iter', type=int,
@@ -501,6 +488,8 @@ if __name__ == "__main__":
     parser.add_argument('--cers_ocr_path',
                             help="Cer information json")
     parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
+    parser.add_argument('--time_decay', help="Decay constant for history weights", type=float)
+
 
     
     

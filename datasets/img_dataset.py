@@ -8,11 +8,12 @@ import numpy as np
 import random
 from utils import get_files
 import properties as properties
+import random
 
 
 class ImgDataset(Dataset):
 
-    def __init__(self, data_dir, transform=None, include_name=False, include_index=False):
+    def __init__(self, data_dir, transform=None, include_name=False, include_index=False, num_subset=None):
         self.transform = transform
         self.include_name = include_name
         self.include_index = include_index
@@ -23,6 +24,8 @@ class ImgDataset(Dataset):
                 self.files.append(img)
         # with open('../sim_model/google_test_samples.txt', 'r') as file:
         #     self.files = [line.strip() for line in file]
+        if num_subset:
+            self.files = random.sample(self.files, num_subset)
 
     def __len__(self):
         return len(self.files)

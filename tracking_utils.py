@@ -1,4 +1,5 @@
 import torch
+import random
 
 def call_crnn(self, images):
     X_var = images.to(self.device)
@@ -47,8 +48,39 @@ def weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights=None
             all_ctc_losses.append(torch.mean(loss_weights_subset*ctc_losses))
     return sum(all_ctc_losses)
 
-def add_labels_to_history(self, image_keys, ocr_labels):
+def add_labels_to_history(self, image_keys, ocr_labels, epoch=None):
     for lbl_index, name in  enumerate(image_keys): 
         if name not in self.tracked_labels:
             self.tracked_labels[name] = list() # Why is this required?
         self.tracked_labels[name].append(ocr_labels[lbl_index])
+        if epoch:
+            if name not in self.tracked_labels:
+                self.tracked_lbl_epochs[name] = list() # Why is this required?
+            self.tracked_lbl_epochs[name].append(epoch)
+
+
+
+# def history_imputation(self, img_pred_names, img_names_all,  img_preds, img_preds_all, skipped_mask, epoch=None):
+#     ocr_labels = self.ocr.get_labels(img_preds)
+#     # Only required if OCR is called, to append to the existing history
+#     add_labels_to_history(self, img_pred_names, ocr_labels, epoch)
+                            
+#     history_present_indices = [idx for idx, name in enumerate(img_names_all) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
+#     loss_weights = None
+#     if history_present_indices and self.crnn_imputation:
+#         history_present_indices = random.sample(history_present_indices, min(len(ocr_labels), len(history_present_indices))) # Sample equal to number of ocr calls
+#         extra_img_names = [img_names_all[idx] for idx in history_present_indices]
+#         img_pred_names.extend(extra_img_names)
+#         extra_imgs = img_preds_all[history_present_indices]
+#         img_preds = torch.cat([img_preds.to(self.device), extra_imgs])
+#         loss_weights = torch.zeros(img_preds.shape[0], self.window_size)
+#         loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
+#         loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
+#         if self.time_decay:
+#             for index, strip_name in enumerate(img_pred_names):
+#                 epoch_dist = [(epoch - element_epoch) for element_epoch in self.tracked_lbl_epochs[strip_name][::-1][:self.window_size]]
+#                 for j in range(len(epoch_dist)):
+#                     loss_weights[index, j] = loss_weights[index, j] * (self.time_decay**epoch_dist[j])
+#         loss_weights = loss_weights.to(self.device)
+        
+#     return img_preds, img_pred_names, loss_weights
