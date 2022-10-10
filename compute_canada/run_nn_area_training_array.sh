@@ -2,10 +2,12 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=3  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=04:00:00     # DD-HH:MM:SS
+#SBATCH --time=06:30:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/%j.out
+#SBATCH --array=1-5
 
-EXP_NUM=142
+# EXP_NUM=142
+EXP_NUM=$((236+${SLURM_ARRAY_TASK_ID}))
 echo "Running Experiment $EXP_ID"
 
 module load StdEnv/2020 tesseract/4.1.0
@@ -37,7 +39,6 @@ TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
 CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
 CER_JSON_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/cer_data_utils/vgg_cers.json"
 mkdir -p $TB_LOGS_PATH $CKPT_BASE_PATH
-# tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
-echo "Running training script"
-python -u train_nn_area.py --batch_size $BATCH_SIZE --epoch $EPOCH --exp_id $EXP_NUM --exp_base_path $EXP_BASE_PATH --crnn_model  $CRNN_MODEL_PATH --data_base_path $SLURM_TMPDIR --exp_name vgg_no_blackbox --inner_limit 0  --cers_ocr_path $CER_JSON_PATH # --minibatch_subset_prop 0.93 --minibatch_subset rangeCER  # --std 0 #--inner_limit_skip 
-# --minibatch_subset_prop 0.5 --label_impute
+
+command=$(sed -n "${SLURM_ARRAY_TASK_ID}p" job_array_vgg)
+eval "$command"

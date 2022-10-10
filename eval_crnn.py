@@ -84,7 +84,7 @@ class EvalCRNN():
         crnn_cer = 0
         counter = 0
 
-        for images, labels, names in enumerate(self.loader_eval):
+        for images, labels, names in self.loader_eval:
             X_var = images.to(self.device)
             scores, y, pred_size, y_size = self._call_model(
                         X_var, labels)            
@@ -118,7 +118,7 @@ class EvalCRNN():
 
     def eval_patch(self):
         print("Eval with ", self.ocr_name)
-        self.prep_model.eval()
+        # self.prep_model.eval()
         ori_lbl_crt_count = 0
         ori_lbl_cer = 0
         prd_lbl_crt_count = 0
@@ -138,12 +138,12 @@ class EvalCRNN():
             ori_lbl_cer += ori_cer
 
             image = image.unsqueeze(0)
-            X_var = image.to(self.device)
-            pred = self.prep_model(X_var)
-            pred = pred.detach().cpu()[0]
+            X_var = image.to(self.device)[0]
+            # pred = self.prep_model(X_var)
+            # pred = pred.detach().cpu()[0]
 
             pred_crops, labels = get_text_stack(
-                pred, labels_dict, self.input_size)
+                X_var, labels_dict, self.input_size)
             pred_labels = self.ocr.get_labels(pred_crops)
             prd_crt_count, prd_cer = compare_labels(
                 pred_labels, labels)

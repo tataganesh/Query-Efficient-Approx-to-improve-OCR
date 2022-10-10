@@ -77,17 +77,17 @@ class EvalPrep():
             img_preds = self.prep_model(X_var)
 
             ocr_lbl_pred = self.ocr.get_labels(img_preds.cpu())
-            ocr_lbl_ori = self.ocr.get_labels(images.cpu())
+            # ocr_lbl_ori = self.ocr.get_labels(images.cpu())
 
-            if self.show_txt:
-                self._print_labels(labels, ocr_lbl_pred, ocr_lbl_ori)
+            # if self.show_txt:
+            #     self._print_labels(labels, ocr_lbl_pred, ocr_lbl_ori)
 
             prd_crt_count, prd_cer = compare_labels(
                 ocr_lbl_pred, labels)
-            ori_crt_count, o_cer = compare_labels(ocr_lbl_ori, labels)
+            # ori_crt_count, o_cer = compare_labels(ocr_lbl_ori, labels)
             pred_correct_count += prd_crt_count
-            ori_correct_count += ori_crt_count
-            ori_cer += o_cer
+            # ori_correct_count += ori_crt_count
+            # ori_cer += o_cer
             pred_cer += prd_cer
 
             if self.show_img:
@@ -96,10 +96,10 @@ class EvalPrep():
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
             pred_correct_count, len(self.dataset), pred_correct_count/len(self.dataset)))
-        print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
-            ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
-        print('Average CER from original images: {:.5f}'.format(
-            ori_cer/len(self.dataset)))
+        # print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
+        #     ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
+        # print('Average CER from original images: {:.5f}'.format(
+        #     ori_cer/len(self.dataset)))
         print('Average CER from predicted images: {:.5f}'.format(
             pred_cer/len(self.dataset)))
 
