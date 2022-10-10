@@ -57,6 +57,7 @@ class TrainNNPrep():
         self.iter_interval = args.print_iter
         self.inner_limit_skip = args.inner_limit_skip
         self.crnn_imputation = args.crnn_imputation
+        self.crnn_prop = args.crnn_prop
         # self.tensorboard_log_path = args.tb_log_path
         torch.manual_seed(42)
         self.train_set =  os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
@@ -273,6 +274,9 @@ class TrainNNPrep():
                             history_present_indices = [idx for idx, name in enumerate(names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
                             loss_weights = None
                             if history_present_indices and self.crnn_imputation:
+                                imp_samples = max(1, math.ceil(img_preds_all.shape[0]*self.crnn_prop)) # 8% samples
+                                if imp_samples <= len(history_present_indices):
+                                    history_present_indices = random.sample(history_present_indices, imp_samples) # Sample equal to number of ocr calls
                                 history_present_indices = random.sample(history_present_indices, min(len(ocr_labels), len(history_present_indices))) # Sample equal to number of ocr calls
                                 extra_img_names = [names[idx] for idx in history_present_indices]
                                 img_preds_names.extend(extra_img_names)
@@ -503,6 +507,8 @@ if __name__ == "__main__":
     parser.add_argument('--cers_ocr_path',
                             help="Cer information json")
     parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
+    parser.add_argument('--crnn_prop', help="Proportion of samples to impute", type=float, default=0.13)
+
 
     
     
