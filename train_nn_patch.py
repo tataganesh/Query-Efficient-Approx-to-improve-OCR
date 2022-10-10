@@ -65,6 +65,7 @@ class TrainNNPrep():
         self.start_epoch = args.start_epoch
         self.selection_method = args.minibatch_subset
         self.crnn_imputation = args.crnn_imputation
+        self.crnn_prop = args.crnn_prop
 
         self.train_batch_prop = 1
     
@@ -326,7 +327,9 @@ class TrainNNPrep():
                                 history_present_indices = [idx for idx, name in enumerate(text_strip_names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
                                 loss_weights = None
                                 if history_present_indices and self.crnn_imputation:
-                                    history_present_indices = python_random.sample(history_present_indices, min(len(ocr_labels), len(history_present_indices))) # Sample equal to number of ocr calls
+                                    imp_samples = max(1, math.ceil(text_crops_all.shape[0]*self.crnn_prop)) # 8% samples
+                                    if imp_samples <= len(history_present_indices):
+                                        history_present_indices = python_random.sample(history_present_indices, imp_samples) # Sample equal to number of ocr calls
                                     extra_img_names = [text_strip_names[idx] for idx in history_present_indices]
                                     text_crop_names.extend(extra_img_names)
                                     extra_imgs = text_crops_all[history_present_indices]
@@ -407,9 +410,6 @@ class TrainNNPrep():
                 # self.optimizer_crnn.step()
                 self.optimizer_prep.step()
 
-            # if "global" in self.selection_method:
-            #     epochs_cer_tbl = wandb.Table(data=[list(self.sampler.cers.values())], columns=list(range(len(self.sampler.cers))))
-            #     wandb.log({"CER Values": epochs_cer_tbl})
             if self.selection_method: 
                 with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
                     json.dump(self.sampler.cers, f)
@@ -545,7 +545,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_base_path',
                         help='Base path training, validation and test data', default=".")
     parser.add_argument('--warmup_epochs', type=int,
-                        default=1, help='number of warmup epochs')
+                        default=0, help='number of warmup epochs')
     parser.add_argument('--exp_name', default="test_patch",
                         help="Specify name of experiment (JVP Jitter, Sample Dropping Etc.)")
     parser.add_argument('--exp_id',
@@ -562,6 +562,7 @@ if __name__ == "__main__":
     parser.add_argument('--image_prop', help="Percentage of images per epoch", type=float)
     parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
     parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
+    parser.add_argument('--crnn_prop', help="Proportion of samples to impute", type=float, default=0.13)
 
     args = parser.parse_args()
     print(args)
