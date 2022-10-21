@@ -28,6 +28,9 @@ class EvalCRNN():
         elif self.dataset_name == 'pos':
             self.test_set = os.path.join(args.data_base_path, properties.patch_dataset_test)
             self.input_size = properties.input_size
+        elif self.dataset_name == 'funsd':
+            self.test_set = os.path.join(args.data_base_path, properties.funsd_dataset_test)
+            self.input_size = properties.input_size 
 
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
@@ -37,8 +40,8 @@ class EvalCRNN():
         self.ocr = get_ocr_helper(self.ocr_name, is_eval=True)
         self.char_to_index, self.index_to_char, self.vocab_size = get_char_maps(
             properties.char_set)
-
-        if self.dataset_name == 'pos':
+        self.char_to_index["_"] = 14
+        if self.dataset_name in ['pos', 'funsd']:
             self.dataset = PatchDataset(self.test_set, pad=True)
         else:
             transform = transforms.Compose([
@@ -57,7 +60,8 @@ class EvalCRNN():
             [scores.shape[0]] * images.shape[0], dtype=torch.int)
         y_size = torch.tensor([len(l) for l in labels], dtype=torch.int)
         conc_label = ''.join(labels)
-        y = [self.char_to_index[c] for c in conc_label]
+        #y = [self.char_to_index[c] for c in conc_label]
+        y =  [self.char_to_index[c] if c in self.char_to_index else self.char_to_index[' '] for c in conc_label]
         y_var = torch.tensor(y, dtype=torch.int)
         return scores, y_var, out_size, y_size
 
@@ -125,6 +129,9 @@ class EvalCRNN():
         prd_lbl_cer = 0
         lbl_count = 0
         counter = 0
+        crnn_correct_count = 0
+        crnn_cer = 0
+
 
         for image, labels_dict in self.dataset:
             text_crops, labels = get_text_stack(
@@ -141,36 +148,39 @@ class EvalCRNN():
             X_var = image.to(self.device)[0]
             # pred = self.prep_model(X_var)
             # pred = pred.detach().cpu()[0]
+            scores, y, pred_size, y_size = self._call_model(
+                        text_crops.to(self.device), labels)            
+            # ocr_lbl_pred = self.ocr.get_labels(X_var.cpu())
+            ocr_lbl_crnn = pred_to_string(scores.cpu(), labels, self.index_to_char)
 
-            pred_crops, labels = get_text_stack(
-                X_var, labels_dict, self.input_size)
-            pred_labels = self.ocr.get_labels(pred_crops)
-            prd_crt_count, prd_cer = compare_labels(
-                pred_labels, labels)
-            prd_lbl_crt_count += prd_crt_count
-            prd_lbl_cer += prd_cer
+            crnn_crt_count, crn_cer = compare_labels(
+                ocr_lbl_crnn, labels)
+            crnn_correct_count += crnn_crt_count
+            # ori_correct_count += ori_crt_count
+            ori_cer += 0
+            crnn_cer += crn_cer
 
             ori_cer = round(ori_cer/len(labels), 2)
-            prd_cer = round(prd_cer/len(labels), 2)
+            crnn_cer = round(crnn_cer/len(labels), 2)
 
             if self.show_img:
                 show_img(image.cpu())
-            if self.show_txt:
-                self._print_labels(labels, pred_labels, ocr_labels)
+            # if self.show_txt:
+            #     self._print_labels(labels, pred_labels, ocr_labels)
             counter += 1
 
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
-            prd_lbl_crt_count, lbl_count, prd_lbl_crt_count/lbl_count))
+            crnn_correct_count, lbl_count, crnn_correct_count/lbl_count))
         print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
             ori_lbl_crt_count, lbl_count, ori_lbl_crt_count/lbl_count))
         print('Average CER from original images: ({:.5f})'.format(
             ori_lbl_cer/lbl_count))
         print('Average CER from predicted images: ({:.5f})'.format(
-            prd_lbl_cer/lbl_count))
+            crnn_cer/lbl_count))
 
     def eval(self):
-        if self.dataset_name == 'pos':
+        if self.dataset_name in ['pos', 'funsd']:
             self.eval_patch()
         else:
             self.eval_area()
@@ -186,7 +196,7 @@ if __name__ == "__main__":
     parser.add_argument('--crnn_path', default=properties.crnn_model_path,
                         help="specify non-default prep model location")
     parser.add_argument('--dataset', default='pos',
-                        help="performs training with given dataset [pos, vgg]")
+                        help="performs training with given dataset [pos, vgg, funsd]")
     parser.add_argument('--ocr', default="Tesseract",
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument("--crnn_model_name",

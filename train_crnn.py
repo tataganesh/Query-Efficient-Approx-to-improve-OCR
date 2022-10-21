@@ -52,6 +52,9 @@ class TrainCRNN():
         elif self.dataset_name == 'vgg':
             self.train_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
             self.validation_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_dev)
+        elif self.dataset_name == 'funsd':
+            self.train_set = os.path.join(args.data_base_path, properties.funsd_text_dataset_train)
+            self.validation_set = os.path.join(args.data_base_path, properties.funsd_text_dataset_dev)
 
         self.input_size = properties.input_size
 
@@ -80,7 +83,7 @@ class TrainCRNN():
                 AddGaussianNoice(
                     std=self.std, is_stochastic=self.is_random_std, return_noise=False)
             ])
-        if self.ocr is not None:
+        if self.ocr is not None or self.dataset_name in ["funsd", "pos"]:
             dataset = OCRDataset(
                 self.train_set, transform=noisy_transform, ocr_helper=self.ocr)
                 

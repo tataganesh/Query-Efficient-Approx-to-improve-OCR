@@ -1,5 +1,5 @@
 """
-Use text area dataset to create json with the following format
+Use patch dataset to create json with the following format
 
 {
     "index_label_foldername": cervalue

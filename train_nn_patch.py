@@ -45,11 +45,13 @@ class TrainNNPrep():
         self.exp_base_path = args.exp_base_path
         self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
         self.cers_base_path = os.path.join(self.exp_base_path, "cers")
+        self.selectedsamples_path = os.path.join(self.exp_base_path, "selected_samples")
         self.tracked_labels_path = os.path.join(self.exp_base_path, "tracked_labels")
         self.tensorboard_log_path = os.path.join(self.exp_base_path, properties.prep_tensor_board)
         self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
-        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path])
+        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path, self.selectedsamples_path])
 
+        self.dataset_type = args.dataset_type
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
         self.std = args.std
@@ -60,8 +62,12 @@ class TrainNNPrep():
         np.random.seed(self.random_seed)
 
         self.model_labels_last = dict() # Seems inefficient
-        self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
-        self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
+        if self.dataset_type == "pos":
+            self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
+            self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
+        elif self.dataset_type == "funsd":
+            self.train_set = os.path.join(args.data_base_path, properties.funsd_dataset_train)
+            self.validation_set = os.path.join(args.data_base_path, properties.funsd_dataset_dev)
         self.start_epoch = args.start_epoch
         self.selection_method = args.minibatch_subset
         self.crnn_imputation = args.crnn_imputation
@@ -76,9 +82,12 @@ class TrainNNPrep():
             self.train_batch_prop = args.minibatch_subset_prop
 
         self.cers = None
+        self.selected_samples = dict()
         if args.cers_ocr_path:
             with open(args.cers_ocr_path, 'r') as f:
                 self.cers = json.load(f)
+            self.selected_samples = dict.fromkeys(self.cers.keys(), [False]*self.max_epochs)
+            
         if self.selection_method:
             self.cls_sampler = datasampler_factory(self.selection_method)
             if self.selection_method in ("uniformCER", "rangeCER"):
@@ -154,7 +163,8 @@ class TrainNNPrep():
             [scores.shape[0]] * images.shape[0], dtype=torch.int)
         y_size = torch.tensor([len(l) for l in labels], dtype=torch.int)
         conc_label = ''.join(labels)
-        y = [self.char_to_index[c] for c in conc_label]
+        # y = [self.char_to_index[c] for c in conc_label]
+        y = [self.char_to_index[c] if c in self.char_to_index else self.char_to_index[' '] for c in conc_label]
         y_var = torch.tensor(y, dtype=torch.int)
         return scores, y_var, out_size, y_size
 
@@ -275,7 +285,7 @@ class TrainNNPrep():
                     # check for number of text crops to be greater than 2, otherwise call black-box for all crops, the 
                     # greater-than-2 condition is ignored if global sampling is performed
                     if self.selection_method and epoch >= self.warmup_epochs and (text_crops_all.shape[0] > 2 or "global" in self.selection_method):
-                        num_bb_samples = max(1, math.ceil(text_crops_all.shape[0]*(1 - self.train_batch_prop)))
+                        num_bb_samples = max(1, math.ceil(text_crops_all.shape[0]*(1 - self.train_batch_prop)*2)) # Doubled to reflect original system inner loop
                         # num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
                         num_samples_subset = max(1, text_crops_all.shape[0] - num_bb_samples)
                         text_crops, labels_gt, bb_sample_indices = self.sampler.query(text_crops_all, labels, num_bb_samples, text_strip_names)
@@ -283,7 +293,10 @@ class TrainNNPrep():
 
                         text_crops = text_crops.detach().cpu()
                         text_crop_names = [text_strip_names[index] for index in bb_sample_indices]
-
+                        # Log selected samples
+                        for name in text_crop_names:
+                            self.selected_samples[name][epoch] = True 
+                        
                         skipped_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
                         skipped_mask[bb_sample_indices] = False
                         
@@ -415,14 +428,24 @@ class TrainNNPrep():
                     json.dump(self.sampler.cers, f)
                 with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
                     json.dump(self.tracked_labels, f)
+                
+                with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
+                    json.dump(self.sampler.cers, f)
+                    
+                wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
+
             with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
                 json.dump(self.tracked_labels, f)
                 
-            with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
-                json.dump(self.sampler.cers, f)
+            with open(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), 'w') as f:
+                json.dump(self.selected_samples, f)
+                
+            with open(os.path.join(self.selectedsamples_path, f"selected_samples_{epoch}.json"), 'w') as f:
+                json.dump(self.selected_samples, f)
+            
 
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
-            wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
+            wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
 
             # self.cer_per_epoch[:, epoch] = np.array(list(self.sampler.cers.values()))
             print(f"Epoch BB calls - {epoch_bb_calls}")
@@ -563,11 +586,18 @@ if __name__ == "__main__":
     parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
     parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
     parser.add_argument('--crnn_prop', help="Proportion of samples to impute", type=float, default=0.13)
+    parser.add_argument('--wandb_tag', choices=["subset_changed", "sweep"],
+                    help='Tag to group runs')
+    parser.add_argument('--dataset_type', choices=["funsd", "pos"], default='pos',
+                    help='Type of patch dataset')
 
     args = parser.parse_args()
     print(args)
     wandb.config.update(vars(args))
     wandb.run.name = f"{args.exp_name}"
+    if args.wandb_tag:
+        wandb.run.tags = wandb.run.tags + (args.wandb_tag,)
+    
     trainer = TrainNNPrep(args)
 
     start = datetime.datetime.now()

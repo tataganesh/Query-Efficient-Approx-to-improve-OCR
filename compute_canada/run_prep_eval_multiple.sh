@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=3  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
 #SBATCH --time=01:00:00     # DD-HH:MM:SS
-#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/eval/%j.out
+#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/eval/%j.out
 
 
 module load StdEnv/2020 tesseract/4.1.0
@@ -29,8 +29,9 @@ rm -rf $DATA_PATH
 # source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 DATA_PATH="$SLURM_TMPDIR/data"
-# DATASET_NAME="patch_dataset"
-DATASET_NAME="vgg"
+#DATASET_NAME="patch_dataset"
+DATASET_NAME="funsd"
+# DATASET_NAME="pos"
 if [ ! -d $DATA_PATH ]
 then
     echo "$DATASET_NAME Dataset extraction started"
@@ -57,13 +58,13 @@ echo "Experiment $1"
 for i in $2 $3 $4
 do
     echo "Preprocessor $i"
-    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$1/ckpts/" --dataset vgg --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$1/ckpts/" --dataset funsd --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
 done
 
 }
 
-run_exp 237 36 45 49 # 8% random vgg
-run_exp 238 44 45 46 # 7% random vgg
-run_exp 239 34 41 46 # 6% random vgg
-run_exp 240 39 42 45 # 5% random vgg
-run_exp 241 43 45 46 # 4% random vgg
+run_exp 254 37 39 47 # 50% rangecer pos
+#run_exp 250 41 42 46 # 8% rangecer pos wrmup
+#run_exp 251 42 44 49 # 8% rangecer pos + no noise warmup
+#run_exp 252 39 47 49 # 8% rangecer pos + tracking
+

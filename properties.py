@@ -14,6 +14,15 @@ patch_dataset_test = "data/patch_dataset_test"
 patch_dataset_dev = "data/patch_dataset_dev"
 
 
+# FUNSD patches
+funsd_dataset_train = "data/funsd_dataset_train"
+funsd_dataset_test = "data/funsd_dataset_test"
+funsd_dataset_dev = "data/funsd_dataset_dev"
+
+funsd_text_dataset_train = "data/funsd_crops_dataset_train"
+funsd_text_dataset_dev = "data/funsd_crops_dataset_dev"
+funsd_text_dataset_test = "data/funsd_crops_dataset_test"
+
 prep_crnn_ckpts = "ckpts"
 crnn_model_path = "./outputs/crnn_trained_model/model"
 crnn_tensor_board = "./outputs/crnn_runs/"

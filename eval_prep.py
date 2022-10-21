@@ -29,6 +29,9 @@ class EvalPrep():
         elif self.dataset_name == 'pos':
             self.test_set = os.path.join(args.data_base_path, properties.patch_dataset_test)
             self.input_size = properties.input_size
+        elif self.dataset_name == 'funsd':
+            self.test_set = os.path.join(args.data_base_path, properties.funsd_dataset_test)
+            self.input_size = properties.input_size
 
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
@@ -37,8 +40,8 @@ class EvalPrep():
 
         self.ocr = get_ocr_helper(self.ocr_name, is_eval=True)
 
-        if self.dataset_name == 'pos':
-            self.dataset = PatchDataset(self.test_set, pad=True)
+        if self.dataset_name in ['pos', 'funsd']:
+            self.dataset = PatchDataset(self.test_set, pad=True, include_name=True)
         else:
             transform = transforms.Compose([
                 PadWhite(self.input_size),
@@ -96,15 +99,16 @@ class EvalPrep():
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
             pred_correct_count, len(self.dataset), pred_correct_count/len(self.dataset)))
-        # print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
-        #     ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
-        # print('Average CER from original images: {:.5f}'.format(
-        #     ori_cer/len(self.dataset)))
+        print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
+            ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
+        print('Average CER from original images: {:.5f}'.format(
+            ori_cer/len(self.dataset)))
         print('Average CER from predicted images: {:.5f}'.format(
             pred_cer/len(self.dataset)))
 
     def eval_patch(self):
         print("Eval with ", self.ocr_name)
+        print()
         self.prep_model.eval()
         ori_lbl_crt_count = 0
         ori_lbl_cer = 0
@@ -113,18 +117,19 @@ class EvalPrep():
         lbl_count = 0
         counter = 0
 
-        for image, labels_dict in self.dataset:
+        for image, labels_dict, name in self.dataset:
+            print(f"Evaluating {name}")
             text_crops, labels = get_text_stack(
                 image.detach(), labels_dict, self.input_size)
             lbl_count += len(labels)
-            if self.show_orig:
-                ocr_labels = self.ocr.get_labels(text_crops)
+            # if self.show_orig:
+            ocr_labels = self.ocr.get_labels(text_crops)
 
-                ori_crt_count, ori_cer = compare_labels(
-                    ocr_labels, labels)
-                ori_lbl_crt_count += ori_crt_count
-                ori_lbl_cer += ori_cer
-                ori_cer = round(ori_cer/len(labels), 2)
+            ori_crt_count, ori_cer = compare_labels(
+                ocr_labels, labels)
+            ori_lbl_crt_count += ori_crt_count
+            ori_lbl_cer += ori_cer
+            ori_cer = round(ori_cer/len(labels), 2)
 
 
             image = image.unsqueeze(0)
@@ -151,16 +156,16 @@ class EvalPrep():
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
             prd_lbl_crt_count, lbl_count, prd_lbl_crt_count/lbl_count))
-        if self.show_orig:
-            print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
-                ori_lbl_crt_count, lbl_count, ori_lbl_crt_count/lbl_count))
-            print('Average CER from original images: ({:.5f})'.format(
-                ori_lbl_cer/lbl_count))
+        # if self.show_orig:
+        print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
+            ori_lbl_crt_count, lbl_count, ori_lbl_crt_count/lbl_count))
+        print('Average CER from original images: ({:.5f})'.format(
+            ori_lbl_cer/lbl_count))
         print('Average CER from predicted images: ({:.5f})'.format(
             prd_lbl_cer/lbl_count))
 
     def eval(self):
-        if self.dataset_name == 'pos':
+        if self.dataset_name in ['pos', 'funsd']:
             self.eval_patch()
         else:
             self.eval_area()
