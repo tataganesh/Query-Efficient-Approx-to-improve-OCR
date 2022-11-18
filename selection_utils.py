@@ -6,6 +6,55 @@ import traceback
 import numpy as np
 import random
 
+def calc_entropy(probs, num_classes=95):
+    e_term = 0.000001  # To avoid log(0) problems
+    log_prob = torch.log(probs + e_term)
+    entropy = -(probs * log_prob).sum(dim=1)
+    normalized_entropy = entropy/torch.log(torch.tensor(num_classes)) # Normalized Entropy
+    return normalized_entropy    
+
+
+def update_entropies(self, crnn_scores, names):
+    crnn_scores = torch.exp(crnn_scores)
+    batch_size = crnn_scores.shape[1]
+    mean_ent_all = list()
+    for i in range(batch_size):
+        ents = calc_entropy(crnn_scores[:, i, :])    
+        mean_ent_all.append(ents.mean().item())
+    self.sampler.update_entropies(mean_ent_all, names)
+        
+        
+
+def sampleUsingEstimates(images, labels, num_samples, names, estimates):
+    """Get 
+
+    Args:
+        images (torch.tensor): Input images
+        labels (torch.tensor): Input labels
+        subset (int): Number of random samples.
+
+    Returns:
+        tuple: Return subset of images and labels. Chosen randomly. 
+    """    
+    image_estimates = list()
+    selection_idx = torch.tensor([], dtype=torch.long)
+    for name in names:
+        if name in estimates:
+            image_estimates.append(estimates[name])
+    image_estimates = torch.tensor(image_estimates)
+    if image_estimates.shape[0] != 0:
+        cer_random_points = (image_estimates.max() - image_estimates.min()) * torch.rand(num_samples) + image_estimates.min()
+        # cer_diff = torch.abs(image_estimates.unsqueeze(1) - cer_random_points.unsqueeze(0))
+        selection_idx = torch.zeros(num_samples, dtype=torch.long)
+        image_estimates_copy = torch.clone(image_estimates)
+        for i, point in enumerate(cer_random_points):
+            index = torch.argmin(torch.abs(point - image_estimates_copy))
+            selection_idx[i] = index
+            image_estimates_copy[index] = 100
+    return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
+
+
+
 class DataSampler(metaclass=ABCMeta):
     def __init__(self, discount_factor=0):
         self.discount_factor = discount_factor  
@@ -36,6 +85,9 @@ class RandomSampler(DataSampler):
 
     def update_cer(self, batch_cers, names):
         for i in range(len(batch_cers)):
+            if names[i] not in self.cers:
+                print(f"Sample not present - {names[i]}")
+                # continue
             self.cers[names[i]] = batch_cers[i]
 
 
@@ -78,7 +130,8 @@ class UniformCerSampler(DataSampler):
     def update_cer(self, cers, names):
         for i in range(len(cers)):
             if names[i] not in self.cers:
-                continue
+                print(f"Sample not present - {names[i]}")
+                # continue
             self.cers[names[i]] = self.discount_factor * cers[i] +  (1 - self.discount_factor) * self.cers[names[i]]
 
 
@@ -119,11 +172,34 @@ class CerRangeSampler(DataSampler):
     def update_cer(self, cers, names):
         for i in range(len(cers)):
             if names[i] not in self.cers:
-                continue
-            self.cers[names[i]] = self.discount_factor * cers[i] +  (1 - self.discount_factor) * self.cers[names[i]]
+                print(f"Sample not present - {names[i]}")
+                # continue
+            self.cers[names[i]] = cers[i]
 
 
-
+class UniformEntropySampler(DataSampler):
+    def __init__(self, entropies, cers):
+        self.entropies = entropies
+        self.cers = cers
+    
+    def query(self, images, labels, num_samples, names):
+        return sampleUsingEstimates(images, labels, num_samples, names, self.entropies)
+    
+    def update_entropies(self, ents, names):
+        for i in range(len(ents)):
+            if names[i] not in self.entropies:
+                print(f"Sample not present - {names[i]}")
+                # continue
+            self.entropies[names[i]] = ents[i]
+            
+    def update_cer(self, cers, names):
+        for i in range(len(cers)):
+            if names[i] not in self.cers:
+                print(f"Sample not present - {names[i]}")
+                # continue
+            self.cers[names[i]] = cers[i]
+    
+    
 class UniformSamplerGlobal(DataSampler):
     def __init__(self, cers, num_samples):
         self.cers = cers
@@ -188,7 +264,7 @@ class RandomSamplerGlobal(DataSampler):
             self.cers[names[i]] = sample_cers[i]
 
 def datasampler_factory(sampling_method):
-    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler, "uniformCERglobal": UniformSamplerGlobal, "randomglobal": RandomSamplerGlobal, "rangeCER": CerRangeSampler}
+    method_mapping = {'uniformCER': UniformCerSampler, 'random': RandomSampler, "uniformCERglobal": UniformSamplerGlobal, "randomglobal": RandomSamplerGlobal, "rangeCER": CerRangeSampler, "uniformEntropy": UniformEntropySampler}
     return method_mapping[sampling_method]
 
 

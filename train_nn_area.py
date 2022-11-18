@@ -18,7 +18,7 @@ from utils import get_ocr_helper, compare_labels, save_img, create_dirs
 from utils import random_subset
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
-from selection_utils import datasampler_factory
+from selection_utils import datasampler_factory, update_entropies
 from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history
 import wandb
 import json
@@ -46,9 +46,11 @@ class TrainNNPrep():
         self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
         self.cers_base_path = os.path.join(self.exp_base_path, "cers")
         self.tracked_labels_path = os.path.join(self.exp_base_path, "tracked_labels")
+        self.selectedsamples_path = os.path.join(self.exp_base_path, "selected_samples")
+        self.entropies_path = os.path.join(self.exp_base_path, "entropies")
         self.tensorboard_log_path = os.path.join(self.exp_base_path, properties.prep_tensor_board)
         self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
-        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path])
+        create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path, self.selectedsamples_path, self.entropies_path])
 
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
@@ -75,21 +77,30 @@ class TrainNNPrep():
         # self.model_preds_last = torch.zeros((self.train_subset_size, 50))
         
         self.cers = None
+        self.entropies = dict()
+        self.selected_samples = dict()
         if args.cers_ocr_path:
             with open(args.cers_ocr_path, 'r') as f:
                 self.cers = json.load(f)
-        
+                
+            for key in self.cers.keys():
+                self.selected_samples[key] = [False] * self.max_epochs
+                self.entropies[key] = 0
+                
         if self.selection_method:
             self.cls_sampler = datasampler_factory(self.selection_method)
             if self.selection_method in ("uniformCER", "rangeCER"):
                 self.sampler = self.cls_sampler(self.cers)
+            elif self.selection_method == "uniformEntropy":
+                self.sampler = self.cls_sampler(self.entropies, self.cers)
             else:
                 self.sampler = self.cls_sampler()
         
         if self.cers:
             self.tracked_labels = {name: [] for name in self.cers.keys()}
-            self.ctc_loss_weights_noocr = torch.tensor([0.5, 0.25, 0.15, 0.07, 0.03])
-            self.ctc_loss_weights = torch.tensor([1, 0.7, 0.4, 0.2, 0.1])
+            # self.ctc_loss_weights_noocr = torch.tensor([0.5, 0.25, 0.15, 0.07, 0.03])
+            # self.ctc_loss_weights = torch.tensor([1, 0.7, 0.4, 0.2, 0.1])
+            self.ctc_loss_weights = args.ctc_loss_weights
             self.window_size = len(self.ctc_loss_weights)
             
         self.input_size = properties.input_size
@@ -252,10 +263,14 @@ class TrainNNPrep():
                     skipped_mask = torch.ones(indices.shape[0], dtype=bool)
                     skipped_mask[bb_sample_indices] = False
                     
+                    for name in img_preds_names:
+                        self.selected_samples[name][epoch] = True
+                    
                 else:
                     img_preds = img_preds_all.detach().cpu() 
                     img_preds_names = names
                     indices = indices_all
+                    skipped_mask = torch.zeros(img_preds.shape[0], dtype=bool)
                     
                     # Compute Loss
                     # primary_loss_fn_sample_wise(scores, y, pred_size, y_size)
@@ -271,23 +286,24 @@ class TrainNNPrep():
                             # Only required if OCR is called, to append to the existing history
                             add_labels_to_history(self, img_preds_names, ocr_labels)
                             
-                            history_present_indices = [idx for idx, name in enumerate(names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
                             loss_weights = None
-                            if history_present_indices and self.crnn_imputation:
-                                imp_samples = max(1, math.ceil(img_preds_all.shape[0]*self.crnn_prop)) # 8% samples
-                                if imp_samples <= len(history_present_indices):
-                                    history_present_indices = random.sample(history_present_indices, imp_samples) # Sample equal to number of ocr calls
-                                history_present_indices = random.sample(history_present_indices, min(len(ocr_labels), len(history_present_indices))) # Sample equal to number of ocr calls
-                                extra_img_names = [names[idx] for idx in history_present_indices]
-                                img_preds_names.extend(extra_img_names)
-                                extra_imgs = img_preds_all[history_present_indices]
-                                img_preds = torch.cat([img_preds.to(self.device), extra_imgs])
-                                loss_weights = torch.zeros(img_preds.shape[0], self.window_size)
-                                loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
-                                loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
-                                loss_weights = loss_weights.to(self.device)
-                                total_crnn_updates += len(history_present_indices)
-                                epoch_crnn_updates += len(history_present_indices)
+                            if self.crnn_imputation:
+                                history_present_indices = [idx for idx, name in enumerate(names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
+                                if history_present_indices:
+                                    imp_samples = max(1, math.ceil(img_preds_all.shape[0]*self.crnn_prop)) # 8% samples
+                                    if imp_samples <= len(history_present_indices):
+                                        history_present_indices = random.sample(history_present_indices, imp_samples) # Sample equal to number of ocr calls
+                                    history_present_indices = random.sample(history_present_indices, min(len(ocr_labels), len(history_present_indices))) # Sample equal to number of ocr calls
+                                    extra_img_names = [names[idx] for idx in history_present_indices]
+                                    img_preds_names.extend(extra_img_names)
+                                    extra_imgs = img_preds_all[history_present_indices]
+                                    img_preds = torch.cat([img_preds.to(self.device), extra_imgs])
+                                    loss_weights = torch.zeros(img_preds.shape[0], self.window_size)
+                                    loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
+                                    loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
+                                    loss_weights = loss_weights.to(self.device)
+                                    total_crnn_updates += len(history_present_indices)
+                                    epoch_crnn_updates += len(history_present_indices)
 
                             # Peek at history of OCR labels for each strip and construct weighted CTC loss
                             target_batches = generate_ctc_target_batches(self, img_preds_names)
@@ -310,7 +326,8 @@ class TrainNNPrep():
                         loss.backward()
                 inner_limit = max(1, self.inner_limit)
                 CRNN_training_loss = temp_loss/inner_limit
-                self.optimizer_crnn.step()
+                if self.inner_limit:
+                    self.optimizer_crnn.step()
                 writer.add_scalar('CRNN Training Loss',
                                   CRNN_training_loss, step)
 
@@ -346,6 +363,9 @@ class TrainNNPrep():
                         _, batch_cer = compare_labels([model_gen_labels[i]], [labels[i]])
                         batch_cers.append(batch_cer)
                     self.sampler.update_cer(batch_cers, names)
+                    
+                    if self.selection_method == "uniformEntropy":
+                        update_entropies(self, scores, names)
 
             
             train_loss =  training_loss / (self.train_set_size//self.train_batch_size)
@@ -356,15 +376,33 @@ class TrainNNPrep():
                     json.dump(self.sampler.cers, f)
                 with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
                     json.dump(self.tracked_labels, f)
+                
+                with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
+                    json.dump(self.sampler.cers, f)
+                
+                wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
+                
+                if self.selection_method == "uniformEntropy":
+                    with open(os.path.join(self.entropies_path, f"entropies_{epoch}.json"), 'w') as f:
+                        json.dump(self.sampler.entropies, f)
+
+                    with open(os.path.join(self.entropies_path, f"entropies_current.json"), 'w') as f:
+                        json.dump(self.sampler.entropies, f)
+                    wandb.save(os.path.join(self.entropies_path, f"entropies_current.json"))
+
             with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
                 json.dump(self.tracked_labels, f)
                 
-            if self.selection_method:
-                with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
-                    json.dump(self.sampler.cers, f)
+            with open(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), 'w') as f:
+                json.dump(self.selected_samples, f)
+
+            with open(os.path.join(self.selectedsamples_path, f"selected_samples_{epoch}.json"), 'w') as f:
+                json.dump(self.selected_samples, f)
+                
 
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
-            wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
+            wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
+
 
             current_lr = self.lr_crnn
             if self.lr_scheduler:
@@ -508,6 +546,7 @@ if __name__ == "__main__":
                             help="Cer information json")
     parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
     parser.add_argument('--crnn_prop', help="Proportion of samples to impute", type=float, default=0.13)
+    parser.add_argument('--ctc_loss_weights', nargs='+', help='CTC Loss weights for tracking', type=float, default=[1, 0.7, 0.4, 0.2, 0.1])
 
 
     
