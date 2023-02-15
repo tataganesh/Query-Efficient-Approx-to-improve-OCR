@@ -2,10 +2,10 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=3  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=04:00:00     # DD-HH:MM:SS
+#SBATCH --time=24:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/%j.out
 
-EXP_NUM=142
+EXP_NUM=260
 echo "Running Experiment $EXP_ID"
 
 module load StdEnv/2020 tesseract/4.1.0

@@ -1,20 +1,20 @@
 #!/bin/bash
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
-#SBATCH --cpus-per-task=4  # Refer to cluster's documentation for the right CPU/GPU ratio
+#SBATCH --cpus-per-task=3  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000M       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=8:30:00     # DD-HH:MM:SS
+#SBATCH --time=9:30:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/%j.out
-#SBATCH --array=1
+#SBATCH --array=1-2
 
-EXP_NUM=$((235+${SLURM_ARRAY_TASK_ID}))
+EXP_NUM=$((361+${SLURM_ARRAY_TASK_ID}))
 echo "Running Experiment $EXP_NUM"
 
 module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 # wandb enabled
-wandb disabled
-wandb offline
-# wandb login $WANDB_API_KEY
+# wandb disabled
+# wandb offline
+wandb login $WANDB_API_KEY
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="patch_dataset" # Name should be changed
@@ -30,12 +30,21 @@ then
 else
     echo "$DATASET_NAME Dataset exists"
 fi
+
+OCR="Tesseract"
+# OCR="EasyOCR"
+
+if [ $OCR == "Tesseract" ]
+then
+    CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_17/crnn_warmup/crnn_model_49"
+else
+    CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_260/crnn_warmup/crnn_model_32"
+fi
+
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 BATCH_SIZE=1
 EPOCH=50
 EXP_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/"
-# CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_8/crnn_warmup/crnn_model_29"
-CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_8/crnn_warmup/crnn_model_29"
 TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
 CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
 PREP_MODEL_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts/Prep_model_29"

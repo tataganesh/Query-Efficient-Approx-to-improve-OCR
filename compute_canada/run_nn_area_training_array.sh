@@ -2,12 +2,12 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=3  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=06:30:00     # DD-HH:MM:SS
+#SBATCH --time=5:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/%j.out
-#SBATCH --array=1-5
+#SBATCH --array=2
 
-# EXP_NUM=142
-EXP_NUM=$((236+${SLURM_ARRAY_TASK_ID}))
+# EXP_NUM=1
+EXP_NUM=$((353+${SLURM_ARRAY_TASK_ID}))
 echo "Running Experiment $EXP_ID"
 
 module load StdEnv/2020 tesseract/4.1.0
@@ -35,6 +35,7 @@ BATCH_SIZE=64
 EPOCH=50
 EXP_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/"
 CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_8/crnn_warmup/crnn_model_29"
+# CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_262/crnn_warmup/crnn_model_49"
 TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
 CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
 CER_JSON_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/cer_data_utils/vgg_cers.json"
