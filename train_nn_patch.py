@@ -9,14 +9,14 @@ import random as python_random
 
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 from selection_utils import datasampler_factory, update_entropies
 
 import torchvision.transforms as transforms
 
 from models.model_crnn import CRNN
 from models.model_unet import UNet
-from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history
+from models.model_attention import HistoryAttention
+from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history, generate_loss_weights
 from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs
 from utils import get_text_stack, get_ocr_helper, compare_labels
@@ -56,7 +56,6 @@ class TrainNNPrep():
         self.ocr_name = args.ocr
         self.std = args.std
         self.is_random_std = args.random_std
-        self.label_impute = args.label_impute
         torch.manual_seed(self.random_seed)
         python_random.seed(self.random_seed)
         np.random.seed(self.random_seed)
@@ -66,8 +65,8 @@ class TrainNNPrep():
         self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
         self.selection_method = args.minibatch_subset
-        self.crnn_imputation = args.crnn_imputation
-        self.crnn_prop = args.crnn_prop
+        self.window_size = args.tracking_window
+        self.attn_penalty_coef = args.attn_penalty_coef
 
         self.train_batch_prop = 1
     
@@ -92,24 +91,11 @@ class TrainNNPrep():
                 self.sampler = self.cls_sampler(self.cers, args.discount_factor)
             elif self.selection_method == "uniformEntropy":
                 self.sampler = self.cls_sampler(self.entropies, self.cers)
-            # elif self.selection_method == "uniformCERglobal":
-            #     num_samples =  int(len(self.cers) * (1 - self.train_batch_prop))
-            #     self.sampler = self.cls_sampler(self.cers, num_samples)
-            #     self.cer_per_epoch = np.array(self.cers.values)
-            # elif self.selection_method == "randomglobal":
-            #     num_samples =  int(len(self.cers) * (1 - self.train_batch_prop))
-            #     self.sampler = self.cls_sampler(self.cers, num_samples)
-            #     self.cer_per_epoch = np.array(self.cers.values)
             else:
                 self.sampler = self.cls_sampler(self.cers)
 
         if self.cers:
             self.tracked_labels = {name: [] for name in self.cers.keys()}
-            # self.ctc_loss_weights_noocr = torch.tensor([0.5, 0.25, 0.15, 0.07, 0.03])
-            # self.ctc_loss_weights = torch.tensor([1, 0.7, 0.4, 0.2, 0.1])
-            self.ctc_loss_weights = args.ctc_loss_weights
-            self.window_size = len(self.ctc_loss_weights)
-            print(f"CTC Loss weights - {self.ctc_loss_weights}")
         self.train_subset_size = args.train_subset_size
         self.val_subset_size = args.val_subset_size
         self.input_size = properties.input_size
@@ -131,6 +117,11 @@ class TrainNNPrep():
         else:
             self.prep_model = torch.load(
                 self.prep_model_path).to(self.device)
+        
+        self.emb_dim = args.emb_dim
+        self.query_dim = args.query_dim
+        
+        self.attention_model = HistoryAttention(len(properties.char_set),self.emb_dim, self.query_dim, self.window_size).to(self.device)
 
         self.dataset = PatchDataset(
             self.train_set, pad=True, include_name=True, num_subset=self.train_subset_size)
@@ -153,13 +144,24 @@ class TrainNNPrep():
         self.primary_loss_fn_sample_wise = CTCLoss(reduction='none').to(self.device)
 
         self.secondary_loss_fn = MSELoss().to(self.device)
+        
+        self.attn_loss_fn = MSELoss().to(self.device)
         self.optimizer_crnn = optim.Adam(
-            self.crnn_model.parameters(), lr=self.lr_crnn, weight_decay=self.weight_decay)
+            list(self.crnn_model.parameters()) + list(self.attention_model.parameters()), lr=self.lr_crnn, weight_decay=self.weight_decay)
         self.optimizer_prep = optim.Adam(
             self.prep_model.parameters(), lr=self.lr_prep, weight_decay=self.weight_decay)
         
 
     def _call_model(self, images, labels):
+        """Get output from CRNN model for images. Convert labels to format suitable for CTC Loss. 
+
+        Args:
+            images (torch.float32): Image Batch
+            labels (list[str]): Text labels corresponding to each image
+
+        Returns:
+            tuple: Tuple of 4 elements
+        """        
         X_var = images.to(self.device)
         scores = self.crnn_model(X_var)
         out_size = torch.tensor(
@@ -189,7 +191,6 @@ class TrainNNPrep():
     def train(self):
         noiser = AddGaussianNoice(
             std=self.std, is_stochastic=self.is_random_std)
-        writer = SummaryWriter(self.tensorboard_log_path)
         
         step = 0
         validation_step = 0
@@ -201,8 +202,8 @@ class TrainNNPrep():
         for epoch in range(self.start_epoch, self.max_epochs):
             if self.selection_method and "global" in self.selection_method: # Criterion to CHECK if this is a global or local selection method
                 self.sampler.select_samples()
-            subset_samples = 0
-            training_loss = 0
+            training_loss = 0.0
+            attn_loss = 0.0
             epoch_print_flag = True
             epoch_bb_calls = 0
             epoch_crnn_updates = 0
@@ -219,7 +220,6 @@ class TrainNNPrep():
                 self.crnn_model.zero_grad()
 
                 CRNN_training_loss = 0
-                # image_preds = list()
                 file_name = None
                 for i in range(len(labels_dicts)):
                     image = images[i]
@@ -241,8 +241,6 @@ class TrainNNPrep():
                     # greater-than-2 condition is ignored if global sampling is performed
                     if self.selection_method and epoch >= self.warmup_epochs and (text_crops_all.shape[0] > 2 or "global" in self.selection_method):
                         num_bb_samples = max(1, math.ceil(text_crops_all.shape[0]*(1 - self.train_batch_prop)))
-                        # num_samples_subset = int(text_crops_all.shape[0]*self.train_batch_prop)
-                        num_samples_subset = max(1, text_crops_all.shape[0] - num_bb_samples)
                         text_crops, labels_gt, bb_sample_indices = self.sampler.query(text_crops_all, labels, num_bb_samples, text_strip_names)
                         bb_sample_indices = bb_sample_indices[:text_crops.shape[0]]
 
@@ -255,67 +253,40 @@ class TrainNNPrep():
 
                         skipped_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
                         skipped_mask[bb_sample_indices] = False
-                        
                         skipped_text_crops = text_crops_all[skipped_mask]
                         labels_skipped = [labels[i] for i in range(skipped_mask.shape[0]) if skipped_mask[i]]
-
-                        if self.label_impute: # Move this to another function
-                            model_lab_last_batch = [self.model_labels_last[name + "_" + str(i.item())] for i in sample_indices]
-                            half_labels_skipped = int(num_samples_subset/2)
-                            gt_self_labels = list()
-                            rand_label_indices = torch.randperm(num_samples_subset)
-                            gt_self_labels = [labels_skipped[i] for i in rand_label_indices[:half_labels_skipped]]
-                            gt_self_labels.extend([model_lab_last_batch[i] for i in rand_label_indices[half_labels_skipped:]])
-                            skipped_text_crops = skipped_text_crops[rand_label_indices]
-                            scores, y, pred_size, y_size = self._call_model(
-                                skipped_text_crops, gt_self_labels)
-                        
-                            loss = self.primary_loss_fn(scores, y, pred_size, y_size)
-                            loss_inv = self.primary_loss_fn_sample_wise(scores, y, pred_size, y_size)
-                            
-                            loss.backward()
-                            if epoch_print_flag:
-                                pprint(list(zip([model_lab_last_batch[i] for i in rand_label_indices], [labels_skipped[i] for i in rand_label_indices], gt_self_labels)))
-                                print(f"Skipped Samples - {skipped_text_crops.shape[0]}")
-                                epoch_print_flag = False
+                    
                     else:
                         text_crops = text_crops_all.detach().cpu()
                         text_crop_names = text_strip_names
                         skipped_mask = torch.zeros(text_crops_all.shape[0], dtype=bool)
                     
                     temp_loss = 0
+                    temp_attn_loss = 0
                     if epoch_print_flag:
                         print(f"Total Samples - {text_crops_all.shape[0]}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
-                        epoch_print_flag = False
                     if text_crops.shape[0] > 0 and not(self.selection_method and int(self.train_batch_prop)==1): # Cases when the black-box should not be called at all (in a mini-batch)
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
                             if i == 0 and self.inner_limit_skip: # Skip adding noise to one of the inner loops
                                 ocr_labels = self.ocr.get_labels(text_crops)
+                                loss_weights, modified_weights_list = generate_loss_weights(self, text_crop_names)
                                 add_labels_to_history(self, text_crop_names, ocr_labels)  
-                                loss_weights = None
-                                if self.crnn_imputation:                          
-                                    history_present_indices = [idx for idx, name in enumerate(text_strip_names) if skipped_mask[idx] and name in self.tracked_labels and self.tracked_labels[name]]
-                                    if history_present_indices:
-                                        imp_samples = max(1, math.ceil(text_crops_all.shape[0]*self.crnn_prop)) # 8% samples
-                                        if imp_samples <= len(history_present_indices):
-                                            history_present_indices = python_random.sample(history_present_indices, imp_samples) # Sample equal to number of ocr calls
-                                        extra_img_names = [text_strip_names[idx] for idx in history_present_indices]
-                                        text_crop_names.extend(extra_img_names)
-                                        extra_imgs = text_crops_all[history_present_indices]
-                                        text_crops = torch.cat([text_crops.to(self.device), extra_imgs])
-                                        loss_weights = torch.zeros(text_crops.shape[0], self.window_size)
-                                        loss_weights[:len(ocr_labels), :] = self.ctc_loss_weights
-                                        loss_weights[len(ocr_labels):, :] = self.ctc_loss_weights_noocr
-                                        loss_weights = loss_weights.to(self.device)
-                                        total_crnn_updates += len(history_present_indices)
-                                        epoch_crnn_updates += len(history_present_indices)
+                                if epoch_print_flag:
+                                    print(f"Loss Weights = {loss_weights}")
+                                    print("History")
+                                    for crop_name in text_crop_names:
+                                        if crop_name in self.tracked_labels:
+                                            print(self.tracked_labels[crop_name])
 
                                 # Peek at history of OCR labels for each strip and construct weighted CTC loss
                                 target_batches = generate_ctc_target_batches(self, text_crop_names)
                                 scores, pred_size = call_crnn(self, text_crops)
-                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
+                                ones_tensor = torch.ones_like(modified_weights_list)
+                                attn_penalty = self.attn_penalty_coef * (self.attn_loss_fn(modified_weights_list, ones_tensor))
+                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights) + attn_penalty
+                                # print(loss.item(), attn_penalty.item(), torch.mean(loss_weights[:, 1:]).item() + 1)
                                 total_bb_calls += len(ocr_labels)
                                 epoch_bb_calls += len(ocr_labels)
                             else:
@@ -328,18 +299,17 @@ class TrainNNPrep():
                                 total_bb_calls += text_crops.shape[0]
                                 epoch_bb_calls += text_crops.shape[0]
                            
-                            # if self.selection_method == "uniformEntropy":
-                            #     update_entropies(self, scores, text_crop_names)
                             if self.inner_limit:
                                 temp_loss += loss.item()
+                                temp_attn_loss += attn_penalty.item()
                                 loss.backward()
 
                     inner_limit = max(1, self.inner_limit)
                     CRNN_training_loss += temp_loss/inner_limit
+                    attn_loss += temp_attn_loss/inner_limit
+                epoch_print_flag = False
                 if self.inner_limit:
                     self.optimizer_crnn.step()
-                writer.add_scalar('CRNN Training Loss',
-                                  CRNN_training_loss, batch_step)
                 batch_step += 1
 
                 self.prep_model.train()
@@ -388,21 +358,21 @@ class TrainNNPrep():
                 # self.optimizer_crnn.step()
                 self.optimizer_prep.step()
 
-            if self.selection_method: 
-                with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
-                    json.dump(self.sampler.cers, f)
+            # if self.selection_method: 
+                # with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
+                #     json.dump(self.sampler.cers, f)
 
-                with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
-                    json.dump(self.sampler.cers, f)
-                wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
+                # with open(os.path.join(self.cers_base_path, f"cers_current.json"), 'w') as f:
+                #     json.dump(self.sampler.cers, f)
+                # wandb.save(os.path.join(self.cers_base_path, f"cers_current.json"))
             
-                if self.selection_method == "uniformEntropy":
-                    with open(os.path.join(self.entropies_path, f"entropies_{epoch}.json"), 'w') as f:
-                        json.dump(self.sampler.entropies, f)
+                # if self.selection_method == "uniformEntropy":
+                #     with open(os.path.join(self.entropies_path, f"entropies_{epoch}.json"), 'w') as f:
+                #         json.dump(self.sampler.entropies, f)
 
-                    with open(os.path.join(self.entropies_path, f"entropies_current.json"), 'w') as f:
-                        json.dump(self.sampler.entropies, f)
-                    wandb.save(os.path.join(self.entropies_path, f"entropies_current.json"))
+                #     with open(os.path.join(self.entropies_path, f"entropies_current.json"), 'w') as f:
+                #         json.dump(self.sampler.entropies, f)
+                #     wandb.save(os.path.join(self.entropies_path, f"entropies_current.json"))
                     
                     
             with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
@@ -419,11 +389,11 @@ class TrainNNPrep():
                 
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
             wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
-            # self.cer_per_epoch[:, epoch] = np.array(list(self.sampler.cers.values()))
             print(f"Epoch BB calls - {epoch_bb_calls}")
             train_loss =  training_loss / self.train_set_size
-            writer.add_scalar('Training Loss', training_loss /
-                              self.train_set_size, epoch + 1)
+            crnn_train_loss = CRNN_training_loss / self.train_set_size
+            final_attn_loss = attn_loss / self.train_set_size
+
             self.prep_model.eval()
             self.crnn_model.eval()
             pred_correct_count = 0
@@ -463,25 +433,18 @@ class TrainNNPrep():
             OCR_cer = tess_CER/self.val_set_size
             val_loss = validation_loss / self.val_set_size
 
-            writer.add_scalar('Accuracy/CRNN_output',
-                              pred_correct_count/label_count, epoch + 1)
-            writer.add_scalar('Accuracy/'+self.ocr_name+'_output',
-                              tess_correct_count/label_count, epoch + 1)
-            writer.add_scalar('Validation Loss',
-                              validation_loss/self.val_set_size, epoch + 1)
-
+            # Log all metrics
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                     "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
                     "train_loss": train_loss, "val_loss": val_loss, 
                     "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls,
-                    "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates})
+                    "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates,
+                    "CRNN_loss": crnn_train_loss, "Attention_loss": final_attn_loss})
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
-            # img.save(properties.img_out_path+'out_'+str(epoch)+'.png', 'PNG')
             img.save(os.path.join(self.img_out_path, 'out_'+str(epoch)+'.png'), 'PNG')
             if epoch == 0:
                 img = transforms.ToPILImage()(image.cpu()[0])
-                # img.save(properties.img_out_path+'out_original.png', 'PNG')
                 img.save(os.path.join(self.img_out_path, 'out_original.png'), 'PNG')
 
             print("CRNN correct count: %d; %s correct count: %d; (validation set size:%d)" % (
@@ -489,15 +452,10 @@ class TrainNNPrep():
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1), self.max_epochs,
                                                                                training_loss / self.train_set_size,
                                                                                validation_loss/self.val_set_size))
-            # print("Epoch: %d/%d => Total Training Samples: %f | Subset Training Samples: %f | Train size: %f" % ((epoch + 1), self.max_epochs,
-            #                                                                         total_samples, subset_samples, self.train_set_size))
             torch.save(self.prep_model,
                         os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
-
-        writer.flush()
-        writer.close()
 
 
 if __name__ == "__main__":
@@ -515,9 +473,9 @@ if __name__ == "__main__":
     parser.add_argument('--random_seed',
                             help="Random seed for experiment", type=int, default=42)
     parser.add_argument('--std', type=int,
-                        default=2, help='standard deviation of Gussian noice added to images (this value devided by 100)')
+                        default=5, help='standard deviation of Gussian noice added to images (this value devided by 100)')
     parser.add_argument('--inner_limit', type=int,
-                        default=5, help='number of inner loop iterations')
+                        default=2, help='number of inner loop iterations')
     parser.add_argument('--inner_limit_skip',
                             help="In the first inner limit loop, do NOT add noise to the image. Added to ease label imputation", 
                             action="store_true")
@@ -548,18 +506,18 @@ if __name__ == "__main__":
     parser.add_argument('--train_subset_size', help="Subset of training size to use", type=int)
     parser.add_argument('--val_subset_size',
                             help="Subset of val size to use", type=int)
-    parser.add_argument('--label_impute',
-                            help="Impute black-box labels for approximator training", action="store_true")
     parser.add_argument('--weight_decay',
                             help="Weight Decay for the optimizer", type=float, default=5e-4)
     parser.add_argument('--cers_ocr_path',
                             help="Cer information json")
     parser.add_argument('--image_prop', help="Percentage of images per epoch", type=float)
     parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
-    parser.add_argument('--crnn_imputation', help="If true, crnn is updated using just the history for samples that do not have an OCR label ", action="store_true")
-    parser.add_argument('--crnn_prop', help="Proportion of samples to impute", type=float, default=0.13)
-    
-    parser.add_argument('--ctc_loss_weights', nargs='+', help='CTC Loss weights for tracking', type=float, default=[1, 0.7, 0.4, 0.2, 0.1])
+    parser.add_argument('--tracking_window', help='Window Size if tracking is enabled', type=int, default=3)
+    parser.add_argument('--query_dim', help='Dimension of query vector in self attention ', type=int, default=32)
+    parser.add_argument('--emb_dim', help='Word Embedding size', type=int, default=256)
+    parser.add_argument('--attn_penalty_coef', help='Coefficient for attention penalty', type=float, default=0)
+
+
 
 
 
