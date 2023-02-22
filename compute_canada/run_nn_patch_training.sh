@@ -5,7 +5,7 @@
 #SBATCH --time=10:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/%j.out
 
-EXP_NUM=374
+EXP_NUM=396
 echo "Running Experiment $EXP_NUM"
 
 module load StdEnv/2020 tesseract/4.1.0
@@ -47,6 +47,6 @@ echo "Running training script"
 # python -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_rangeCER_4_tracking_imp --exp_id $EXP_NUM --minibatch_subset rangeCER --minibatch_subset_prop 0.95 --inner_limit 1 --inner_limit_skip --cers_ocr_path $CER_JSON_PATH --crnn_imputation # --softlabel_tracking_prob 0.9 --train_subset_size 50 --val_subset_size 25  --inner_limit_skip
 # python -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_uniform_0.95_skip_inner_tracking_wd0_r100 --exp_id $EXP_NUM --minibatch_subset uniformCER --minibatch_subset_prop 0.95 --inner_limit 2  --inner_limit_skip --warmup_epochs 0 --cers_ocr_path $CER_JSON_PATH --random_seed 100 --weight_decay 0 # --softlabel_tracking_prob 0.9 --train_subset_size 50 --val_subset_size 25  --inner_limit_skip
 # python3 -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_8_random_attention --exp_id $EXP_NUM  --minibatch_subset random --minibatch_subset_prop 0.87  --inner_limit 1 --inner_limit_skip  --cers_ocr_path $CER_JSON_PATH # --attn_penalty_coef 0.5 # --train_subset_size 100 --val_subset_size 50
-python3 -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_8_random_msepenalty2 --exp_id $EXP_NUM  --minibatch_subset random --minibatch_subset_prop 0.87  --inner_limit 1 --inner_limit_skip  --cers_ocr_path $CER_JSON_PATH --attn_penalty_coef 2 # --train_subset_size 100 --val_subset_size 50
-
+# python3 -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_8_random_std5 --exp_id $EXP_NUM  --minibatch_subset random --minibatch_subset_prop 0.87  --inner_limit 1 --cers_ocr_path $CER_JSON_PATH # --train_subset_size 100 --val_subset_size 50 # --attn_penalty_coef 2 # 
+python3 -u train_nn_patch.py --epoch $EPOCH --data_base_path $SLURM_TMPDIR --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_8_random_nonoise --exp_id $EXP_NUM  --minibatch_subset random --minibatch_subset_prop 0.87  --inner_limit 1  --cers_ocr_path $CER_JSON_PATH  --std 0 # --attn_penalty_coef 2 --train_subset_size 100 --val_subset_size 50
 

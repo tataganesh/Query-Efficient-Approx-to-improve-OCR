@@ -2,15 +2,15 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=1  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=0:20:00     # DD-HH:MM:SS
-#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/eval/%j.out
+#SBATCH --time=2:30:00     # DD-HH:MM:SS
+#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/eval/%j.out
 
 
 module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 
 
-echo "EasyOCR VGG results"
+echo "Tesseract POS results"
 
 EXP_ID=259
 DATA_PATH="$SLURM_TMPDIR/data"
@@ -48,42 +48,42 @@ local exps=("$@")
 for i in "${exps[@]}";
 do
     echo "Preprocessor $i"
-    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR --ocr EasyOCR
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR --ocr Tesseract
 done
 
 }
 
 
 
+exps=(49)
+run_exp 122 "${exps[@]}" 
+
 exps=(48)
-run_exp 360 "${exps[@]}" # 46
+run_exp 394 "${exps[@]}" # both
 
 exps=(49)
-run_exp 361 "${exps[@]}" # both
+run_exp 390 "${exps[@]}" # 49
+
+exps=(43)
+run_exp 392 "${exps[@]}" #  48
+
+exps=(46)
+run_exp 395 "${exps[@]}" #  42
+
+exps=(49)
+run_exp 391 "${exps[@]}" #  45
 
 # exps=(47)
-# run_exp 334 "${exps[@]}" # 49
-
-# exps=(49)
-# run_exp 335 "${exps[@]}" #  48
-
-# exps=(41 44)
-# run_exp 336 "${exps[@]}" #  42
-
-# exps=(47)
-# run_exp 337 "${exps[@]}" #  45
+# run_exp 378 "${exps[@]}" #  47
 
 # exps=(45)
-# run_exp 338 "${exps[@]}" #  47
+# run_exp 381 "${exps[@]}" #  48
 
-# exps=(43)
-# run_exp 339 "${exps[@]}" #  48
+# exps=(47)
+# run_exp 376 "${exps[@]}" #  41
 
-# exps=(49)
-# run_exp 340 "${exps[@]}" #  41
-
-# exps=(33 34)
-# run_exp 325 "${exps[@]}" #  33
+# exps=(36)
+# run_exp 375 "${exps[@]}" #  33
 
 
 # exps=(45 49)

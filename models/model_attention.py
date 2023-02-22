@@ -23,14 +23,13 @@ class HistoryAttention(nn.Module):
 
         query = self.Wq(word_embs)
         attention_scores = F.softmax(torch.matmul(query, query.T)/math.sqrt(self.Dq), dim=1)
-        loss_weights = F.sigmoid(self.loss_coef_layer(attention_scores))
         if self.activation == "sigmoid":
             loss_weights = F.sigmoid(self.loss_coef_layer(attention_scores))
         elif self.activation == "softmax":
             loss_weights = F.softmax(self.loss_coef_layer(attention_scores), dim=1)
         elif self.activation == "relu":
             loss_weights = F.relu(self.loss_coef_layer(attention_scores))
-            loss_weights = loss_weights/(loss_weights.sum() + 0.0001) # Normalize ReLU output
+            loss_weights = loss_weights/(loss_weights.sum() + 0.000001) # Normalize ReLU output
 
         loss_weights = loss_weights.squeeze(dim=1) # Conver from (window_size x 1) to (window_size)
         return loss_weights

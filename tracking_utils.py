@@ -40,11 +40,11 @@ def generate_loss_weights(self, img_names: list):
     """
     loss_weights = torch.zeros(len(img_names), self.window_size + 1).to(self.device)
     loss_weights[:, 0] = 1 # Weight of 1 for most recent label
-    modified_weights_list = torch.ones(1).to(self.device)
+    modified_weights_list = torch.empty(0).to(self.device)
     for img_index, name in enumerate(img_names):
         if name not in self.tracked_labels:
             continue
-        label_history = self.tracked_labels[name][-self.window_size:] # Get labels in specific window from history, from most -> least recent
+        label_history = self.tracked_labels[name][-self.window_size:][::-1] # Get labels in specific window from history, from most -> least recent
         history_len = len(label_history)
         if history_len:
             encoded_words = str_to_tensor(self, label_history) # Convert words to tensor representation
