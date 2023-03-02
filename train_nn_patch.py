@@ -16,7 +16,7 @@ import torchvision.transforms as transforms
 from models.model_crnn import CRNN
 from models.model_unet import UNet
 from models.model_attention import HistoryAttention
-from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history, generate_loss_weights
+from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history, generate_loss_weights, generate_weights_levenshtein
 from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs
 from utils import get_text_stack, get_ocr_helper, compare_labels
@@ -293,7 +293,8 @@ class TrainNNPrep():
                                 self.attn_forward_hook1 = self.attention_model.loss_coef_layer.register_forward_hook(self.get_layer_input('loss_w_layer'))
                                 self.attn_forward_hook2 = self.attention_model.Wq.register_forward_hook(self.get_layer_input('word_embs'))
                                 ocr_labels = self.ocr.get_labels(text_crops)
-                                loss_weights, modified_weights_list = generate_loss_weights(self, text_crop_names)
+                                # loss_weights, modified_weights_list = generate_loss_weights(self, text_crop_names)
+                                loss_weights, modified_weights_list = generate_weights_levenshtein(self, text_crop_names)
                                 add_labels_to_history(self, text_crop_names, ocr_labels)  
                                 if epoch_print_flag:
                                     print(f"Loss Weights = {loss_weights}")

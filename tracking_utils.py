@@ -1,6 +1,7 @@
 import torch
 from typing import List
 import properties
+import Levenshtein
 
 def call_crnn(self, images):
     X_var = images.to(self.device)
@@ -53,6 +54,42 @@ def generate_loss_weights(self, img_names: list):
             modified_weights_list = torch.cat((modified_weights_list, weights[:history_len]))
     return loss_weights, modified_weights_list
 
+
+def generate_weights_levenshtein(self, img_names: list):
+    """Generate loss weights using levenshtein distance between history labels
+
+    Args:
+        img_names (list): List of selected images from current mini-batch
+
+    Returns:
+        tuple(torch.tensor, torch.tensor): Returns (loss weights, loss weights list). 
+            loss weights - Tensor of shape (|img_names|, window_size + 1)
+            loss weights list - 1-D tensor of all calculated loss weights. Used for wandb logging
+    """    
+    loss_weights = torch.zeros(len(img_names), self.window_size + 1).to(self.device)
+    loss_weights[:, 0] = 1 # Weight of 1 for most recent label
+    modified_weights_list = list()
+    for img_index, name in enumerate(img_names):
+        if name not in self.tracked_labels:
+            continue
+        label_history = self.tracked_labels[name][-self.window_size:][::-1]
+        num_elements = max((len(label_history) - 1), 1)  # Omit ith element
+        for i in range(len(label_history)):
+            dist_sum = 0
+            num_chars = max(1, len(label_history[i]))
+            for j in range(len(label_history)):
+                if i == j:
+                    continue
+                dist_sum += Levenshtein.distance(label_history[i], label_history[j])          
+            dist_mean = dist_sum/num_elements # Mean of distances with all other labels
+            normalized_dist_mean = 1 - min(dist_mean, num_chars)/num_chars # Min-Max normalization using input string length. Smaller values are closer to 1
+            loss_weights[img_index][i + 1] = normalized_dist_mean # i + 1 because first column is for label from current epoch
+            modified_weights_list.append(normalized_dist_mean)
+    modified_weights_list = torch.tensor(modified_weights_list).to(self.device)
+    return loss_weights, modified_weights_list
+            
+    
+    
 
 def generate_ctc_label(self, labels):
     y_size = torch.tensor([len(l) for l in labels], dtype=torch.int)
@@ -109,11 +146,12 @@ if __name__ =="__main__":
     
     class temp:      
         def __init__(self):
-            self.window_size = 3
-            self.history = {
-                "a": ["a"],
-                "b": ["c", "b", "a"]
+            self.window_size = 4
+            self.device = 'cpu'
+            self.tracked_labels = {
+                "a": ["a", "a", "a"],
+                "b": ["i", " ", "o", "a"]
             }
     obj = temp()
-    print(generate_loss_weights(obj, attn_model, obj.history.keys()))
+    print(generate_weights_levenshtein(obj, obj.tracked_labels.keys()))
             
