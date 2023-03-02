@@ -4,8 +4,8 @@ import os
 
 import torchvision.transforms as transforms
 
-from datasets.patch_dataset import PatchDataset
-from datasets.img_dataset import ImgDataset
+from datasets import patch_dataset
+from datasets import img_dataset
 from utils import show_img, compare_labels, get_text_stack, get_ocr_helper
 from transform_helper import PadWhite
 import properties as properties
@@ -17,7 +17,6 @@ class EvalPrep():
         self.batch_size = args.batch_size
         self.show_txt = args.show_txt
         self.show_img = args.show_img
-        self.prep_model_name = args.prep_model_name
         self.prep_model_path = args.prep_path
         self.ocr_name = args.ocr
         self.dataset_name = args.dataset
@@ -32,19 +31,18 @@ class EvalPrep():
 
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
-        self.prep_model = torch.load(os.path.join(
-            self.prep_model_path, self.prep_model_name)).to(self.device)
+        self.prep_model = torch.load(self.prep_model_path).to(self.device)
 
         self.ocr = get_ocr_helper(self.ocr_name, is_eval=True)
 
         if self.dataset_name == 'pos':
-            self.dataset = PatchDataset(self.test_set, pad=True)
+            self.dataset = patch_dataset.PatchDataset(self.test_set, pad=True)
         else:
             transform = transforms.Compose([
                 PadWhite(self.input_size),
                 transforms.ToTensor(),
             ])
-            self.dataset = ImgDataset(
+            self.dataset = img_dataset.ImgDataset(
                 self.test_set, transform=transform, include_name=True)
             self.loader_eval = torch.utils.data.DataLoader(
                 self.dataset, batch_size=self.batch_size, num_workers=properties.num_workers)
@@ -158,12 +156,13 @@ class EvalPrep():
                 ori_lbl_cer/lbl_count))
         print('Average CER from predicted images: ({:.5f})'.format(
             prd_lbl_cer/lbl_count))
+        return prd_lbl_crt_count/lbl_count, prd_lbl_cer/lbl_count
 
     def eval(self):
         if self.dataset_name == 'pos':
-            self.eval_patch()
+            return self.eval_patch()
         else:
-            self.eval_area()
+            return self.eval_area()
 
 
 if __name__ == "__main__":
@@ -179,8 +178,6 @@ if __name__ == "__main__":
                         help="performs training with given dataset [pos, vgg]")
     parser.add_argument('--ocr', default="Tesseract",
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
-    parser.add_argument("--prep_model_name",
-                        default='prep_tesseract_pos', help='Prep model name')
     parser.add_argument("--batch_size", default=64, type=int,  help='Inference batch size')
     parser.add_argument('--data_base_path',
                         help='Base path training, validation and test data', default=".")

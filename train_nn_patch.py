@@ -20,6 +20,7 @@ from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, gen
 from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs
 from utils import get_text_stack, get_ocr_helper, compare_labels
+from eval_utils import prep_eval
 from transform_helper import AddGaussianNoice
 import properties as properties
 from pprint import pprint
@@ -44,6 +45,7 @@ class TrainNNPrep():
         self.inner_limit_skip = args.inner_limit_skip
         self.crnn_model_path = args.crnn_model
         self.prep_model_path = args.prep_model
+        self.data_base_path = args.data_base_path
         self.exp_base_path = args.exp_base_path
         self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
         self.cers_base_path = os.path.join(self.exp_base_path, "cers")
@@ -124,8 +126,12 @@ class TrainNNPrep():
         self.query_dim = args.query_dim
         self.attn_activation = args.attn_activation
         
-        self.attention_model = HistoryAttention(len(properties.char_set),self.emb_dim, self.query_dim, self.window_size, self.attn_activation).to(self.device)
+        self.attention_model = HistoryAttention(len(properties.char_set),self.emb_dim, self.query_dim, self.window_size, self.attn_activation, args.is_emb_train).to(self.device)
         self.attn_outputs = defaultdict(lambda : [])
+        
+        wandb.watch(self.attention_model, log_freq=5)
+        wandb.watch(self.prep_model, log_freq=5)
+        wandb.watch(self.crnn_model, log_freq=5)
         
         self.dataset = PatchDataset(
             self.train_set, pad=True, include_name=True, num_subset=self.train_subset_size)
@@ -205,6 +211,9 @@ class TrainNNPrep():
         batch_step = 0
         total_bb_calls = 0
         total_crnn_updates = 0
+        best_val_acc = 0
+        best_val_epoch = 0
+        best_val_ckpt_path = None
 
 
         for epoch in range(self.start_epoch, self.max_epochs):
@@ -459,10 +468,25 @@ class TrainNNPrep():
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1), self.max_epochs,
                                                                                training_loss / self.train_set_size,
                                                                                validation_loss/self.val_set_size))
-            torch.save(self.prep_model,
-                        os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch)))
+            prep_ckpt_path = os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch))
+            torch.save(self.prep_model, prep_ckpt_path)
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
+            if epoch % 5 and self.inner_limit_skip and self.window_size > 1:
+                torch.save(self.attention_model, os.path.join(self.ckpt_base_path, 
+                       "attn_model_" + str(epoch)))
+                
+            
+            if OCR_accuracy > best_val_acc:
+                best_val_acc = OCR_accuracy
+                best_val_ckpt_path = prep_ckpt_path
+                best_val_epoch = epoch
+        
+        summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
+        summary_metrics["best_val_acc"] = best_val_acc
+        summary_metrics["best_val_epoch"] = best_val_epoch
+        wandb.run.summary.update(summary_metrics)  
+        
 
 
 if __name__ == "__main__":
@@ -519,11 +543,12 @@ if __name__ == "__main__":
                             help="Cer information json")
     parser.add_argument('--image_prop', help="Percentage of images per epoch", type=float)
     parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
-    parser.add_argument('--tracking_window', help='Window Size if tracking is enabled', type=int, default=3)
+    parser.add_argument('--tracking_window', help='Window Size if tracking is enabled', type=int, default=1)
     parser.add_argument('--query_dim', help='Dimension of query vector in self attention ', type=int, default=32)
     parser.add_argument('--emb_dim', help='Word Embedding size', type=int, default=256)
     parser.add_argument('--attn_penalty_coef', help='Coefficient for attention penalty', type=float, default=0)
     parser.add_argument('--attn_activation', help='Activation function after last layer of self attention module', type=str, default='sigmoid', choices=['sigmoid', 'softmax', 'relu'])
+    parser.add_argument('--is_emb_train', help='Boolean to indicate if word embeddings are trainable.', action='store_true')
 
 
 
