@@ -29,7 +29,6 @@ import wandb
 from pprint import pprint
 from collections import defaultdict
 wandb.Table.MAX_ROWS = 100000
-wandb.init(project='ocr-calls-reduction', entity='tataganesh')
 
 class TrainNNPrep():
 
@@ -127,12 +126,7 @@ class TrainNNPrep():
         self.attn_activation = args.attn_activation
         
         self.attention_model = HistoryAttention(len(properties.char_set),self.emb_dim, self.query_dim, self.window_size, self.attn_activation, args.is_emb_train).to(self.device)
-        self.attn_outputs = defaultdict(lambda : [])
-        
-        wandb.watch(self.attention_model, log_freq=5)
-        wandb.watch(self.prep_model, log_freq=5)
-        wandb.watch(self.crnn_model, log_freq=5)
-        
+        self.attn_outputs = defaultdict(lambda : [])     
         self.dataset = PatchDataset(
             self.train_set, pad=True, include_name=True, num_subset=self.train_subset_size)
         self.validation_set = PatchDataset(
@@ -144,7 +138,7 @@ class TrainNNPrep():
         self.train_set_size = int(len(self.dataset))
         self.val_set_size = len(self.validation_set)
 
-        image_proportion = args.image_prop # Proportion of images to select per epoch
+        image_proportion = args.image_prop  # Proportion of images to select per epoch
         self.num_subset_images = None
         if image_proportion:
             self.num_subset_images = int(image_proportion * self.train_set_size)
@@ -257,7 +251,7 @@ class TrainNNPrep():
                         text_strip_names.append(text_strip_name)
                     # check for number of text crops to be greater than 2, otherwise call black-box for all crops, the 
                     # greater-than-2 condition is ignored if global sampling is performed
-                    if self.selection_method and epoch >= self.warmup_epochs and (text_crops_all.shape[0] > 2 or "global" in self.selection_method):
+                    if self.selection_method and epoch >= self.warmup_epochs and ("global" not in self.selection_method): # Remove num_strips > 2 condition
                         num_bb_samples = max(1, math.ceil(text_crops_all.shape[0]*(1 - self.train_batch_prop)))
                         text_crops, labels_gt, bb_sample_indices = self.sampler.query(text_crops_all, labels, num_bb_samples, text_strip_names)
                         bb_sample_indices = bb_sample_indices[:text_crops.shape[0]]
@@ -285,11 +279,11 @@ class TrainNNPrep():
                     if epoch_print_flag:
                         print(f"Total Samples - {text_crops_all.shape[0]}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
-                    if text_crops.shape[0] > 0 and not(self.selection_method and int(self.train_batch_prop)==1): # Cases when the black-box should not be called at all (in a mini-batch)
+                    if text_crops.shape[0] > 0 and not (self.selection_method and int(self.train_batch_prop) == 1):  # Cases when the black-box should not be called at all (in a mini-batch)
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
-                            if i == 0 and self.inner_limit_skip: # Skip adding noise to one of the inner loops
-                                self.attn_outputs = defaultdict(lambda : [])
+                            if i == 0 and self.inner_limit_skip:  # Skip adding noise to one of the inner loops
+                                self.attn_outputs = defaultdict(lambda: [])
                                 self.attn_forward_hook1 = self.attention_model.loss_coef_layer.register_forward_hook(self.get_layer_input('loss_w_layer'))
                                 self.attn_forward_hook2 = self.attention_model.Wq.register_forward_hook(self.get_layer_input('word_embs'))
                                 ocr_labels = self.ocr.get_labels(text_crops)
@@ -403,6 +397,9 @@ class TrainNNPrep():
             with open(os.path.join(self.selectedsamples_path, f"selected_samples_{epoch}.json"), 'w') as f:
                 json.dump(self.selected_samples, f)
                 
+            with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
+                json.dump(self.sampler.cers, f)
+                
             wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
             wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
             print(f"Epoch BB calls - {epoch_bb_calls}")
@@ -419,6 +416,7 @@ class TrainNNPrep():
             pred_CER = 0
             tess_CER = 0
             label_count = 0
+            
             with torch.no_grad():
                 for image, labels_dict in self.validation_set:
                     image = image.unsqueeze(0)
@@ -473,9 +471,9 @@ class TrainNNPrep():
             torch.save(self.prep_model, prep_ckpt_path)
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
-            if epoch % 5 and self.inner_limit_skip and self.window_size > 1:
-                torch.save(self.attention_model, os.path.join(self.ckpt_base_path, 
-                       "attn_model_" + str(epoch)))
+            # if epoch % 5 and self.inner_limit_skip and self.window_size > 1:
+            #     torch.save(self.attention_model, os.path.join(self.ckpt_base_path, 
+            #            "attn_model_" + str(epoch)))
                 
             
             if OCR_accuracy > best_val_acc:
@@ -552,12 +550,9 @@ if __name__ == "__main__":
     parser.add_argument('--is_emb_train', help='Boolean to indicate if word embeddings are trainable.', action='store_true')
 
 
-
-
-
-
     args = parser.parse_args()
     print(args)
+    wandb.init(project='ocr-calls-reduction', entity='tataganesh')
     wandb.config.update(vars(args))
     wandb.run.name = f"{args.exp_name}"
     trainer = TrainNNPrep(args)

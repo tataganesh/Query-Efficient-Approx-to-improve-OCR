@@ -65,7 +65,8 @@ def generate_weights_levenshtein(self, img_names: list):
         tuple(torch.tensor, torch.tensor): Returns (loss weights, loss weights list). 
             loss weights - Tensor of shape (|img_names|, window_size + 1)
             loss weights list - 1-D tensor of all calculated loss weights. Used for wandb logging
-    """    
+    """
+    hist_multiplier = 0.5  
     loss_weights = torch.zeros(len(img_names), self.window_size + 1).to(self.device)
     loss_weights[:, 0] = 1 # Weight of 1 for most recent label
     modified_weights_list = list()
@@ -82,7 +83,7 @@ def generate_weights_levenshtein(self, img_names: list):
                     continue
                 dist_sum += Levenshtein.distance(label_history[i], label_history[j])          
             dist_mean = dist_sum/num_elements # Mean of distances with all other labels
-            normalized_dist_mean = 1 - min(dist_mean, num_chars)/num_chars # Min-Max normalization using input string length. Smaller values are closer to 1
+            normalized_dist_mean = hist_multiplier * (1 - min(dist_mean, num_chars)/num_chars) # Min-Max normalization using input string length. Smaller values are closer to 1
             loss_weights[img_index][i + 1] = normalized_dist_mean # i + 1 because first column is for label from current epoch
             modified_weights_list.append(normalized_dist_mean)
     modified_weights_list = torch.tensor(modified_weights_list).to(self.device)

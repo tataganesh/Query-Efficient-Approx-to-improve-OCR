@@ -18,6 +18,7 @@ class PatchDataset(Dataset):
         self.include_name = include_name
         self.files = get_files(data_dir, ['png', 'jpg'])
         if num_subset:
+            random.seed(42)  # Allows reproducibility of train/val subsets
             self.files = random.sample(self.files, num_subset)
         self.size = (400, 512)
 
@@ -93,7 +94,7 @@ class PatchDataset(Dataset):
 
         if len(label_list_out) == 0:
             label_list_out.append(
-                {'label': ' ', 'x_min': 0, 'y_min': 0, 'x_max': 127, 'y_max': 31, "index": 0})
+                {'label': properties.empty_char, 'x_min': 0, 'y_min': 0, 'x_max': 127, 'y_max': 31, "index": 0})
         # print(label_list_out)
         return label_list_out
 
