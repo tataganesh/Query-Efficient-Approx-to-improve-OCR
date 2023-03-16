@@ -2,6 +2,8 @@ import os
 import torch
 import Levenshtein
 import numpy as np
+import sys
+sys.path.insert(0, "datasets")
 
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
@@ -10,7 +12,7 @@ import torchvision.utils as utils
 
 import ocr_helper.tess_helper as tess_helper
 import ocr_helper.eocr_helper as eocr_helper
-
+import ocr_helper.gcloud_helper as gcloud_helper
 
 def get_char_maps(vocabulary=None):
     if vocabulary is None:
@@ -168,6 +170,8 @@ def get_ocr_helper(ocr, is_eval=False):
         return tess_helper.TessHelper(is_eval=is_eval)
     elif ocr == "EasyOCR":
         return eocr_helper.EocrHelper(is_eval=is_eval)
+    elif ocr == "gvision":
+        return gcloud_helper.GcloudHelper(is_eval=is_eval)
     else:
         return None
 

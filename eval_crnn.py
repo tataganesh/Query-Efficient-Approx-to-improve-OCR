@@ -21,6 +21,7 @@ class EvalCRNN():
         self.crnn_model_path = args.crnn_path
         self.ocr_name = args.ocr
         self.dataset_name = args.dataset
+        self.show_orig = args.show_orig
 
         if self.dataset_name == 'vgg':
             self.test_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_test)
@@ -28,13 +29,17 @@ class EvalCRNN():
         elif self.dataset_name == 'pos':
             self.test_set = os.path.join(args.data_base_path, properties.patch_dataset_test)
             self.input_size = properties.input_size
+        elif self.dataset_name == 'pos_textarea':
+            self.test_set = os.path.join(args.data_base_path, properties.pos_text_dataset_test)
+            self.input_size = properties.input_size
 
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
         self.crnn_model = torch.load(os.path.join(
             self.crnn_model_path, self.crnn_model_name)).to(self.device)
-
+        print(f"OCR name - {self.ocr_name}")
         self.ocr = get_ocr_helper(self.ocr_name, is_eval=True)
+        print(self.ocr)
         self.char_to_index, self.index_to_char, self.vocab_size = get_char_maps(
             properties.char_set)
 
@@ -117,49 +122,37 @@ class EvalCRNN():
         print('Average CER using CRNN: {:.5f}'.format(
             crnn_cer/len(self.dataset)))
 
-
-
     def eval_patch(self):
         print("Eval with ", self.ocr_name)
-        # self.prep_model.eval()
         ori_lbl_crt_count = 0
         ori_lbl_cer = 0
-        prd_lbl_crt_count = 0
-        prd_lbl_cer = 0
         lbl_count = 0
         counter = 0
         crnn_correct_count = 0
         crnn_cer = 0
 
-
         for image, labels_dict in self.dataset:
             text_crops, labels = get_text_stack(
                 image.detach(), labels_dict, self.input_size)
             lbl_count += len(labels)
-            ocr_labels = self.ocr.get_labels(text_crops)
+            if self.show_orig:
+                ocr_labels = self.ocr.get_labels(text_crops)
 
-            ori_crt_count, ori_cer = compare_labels(
-                ocr_labels, labels)
-            ori_lbl_crt_count += ori_crt_count
-            ori_lbl_cer += ori_cer
+                ori_crt_count, ori_cer = compare_labels(
+                    ocr_labels, labels)
+                ori_lbl_crt_count += ori_crt_count
+                ori_lbl_cer += ori_cer
 
-            image = image.unsqueeze(0)
-            X_var = image.to(self.device)[0]
-            # pred = self.prep_model(X_var)
-            # pred = pred.detach().cpu()[0]
             scores, y, pred_size, y_size = self._call_model(
                         text_crops.to(self.device), labels)            
-            # ocr_lbl_pred = self.ocr.get_labels(X_var.cpu())
             ocr_lbl_crnn = pred_to_string(scores.cpu(), labels, self.index_to_char)
 
             crnn_crt_count, crn_cer = compare_labels(
                 ocr_lbl_crnn, labels)
             crnn_correct_count += crnn_crt_count
-            # ori_correct_count += ori_crt_count
-            ori_cer += 0
+
             crnn_cer += crn_cer
 
-            ori_cer = round(ori_cer/len(labels), 2)
             crnn_cer = round(crnn_cer/len(labels), 2)
 
             if self.show_img:
@@ -167,17 +160,16 @@ class EvalCRNN():
             # if self.show_txt:
             #     self._print_labels(labels, pred_labels, ocr_labels)
             counter += 1
-        
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
             crnn_correct_count, lbl_count, crnn_correct_count/lbl_count))
-        print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
-            ori_lbl_crt_count, lbl_count, ori_lbl_crt_count/lbl_count))
-        print('Average CER from original images: ({:.5f})'.format(
-            ori_lbl_cer/lbl_count))
+        if self.show_orig:
+            print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
+                ori_lbl_crt_count, lbl_count, ori_lbl_crt_count/lbl_count))
+            print('Average CER from original images: ({:.5f})'.format(
+                ori_lbl_cer/lbl_count))
         print('Average CER from predicted images: ({:.5f})'.format(
             crnn_cer/lbl_count))
-
 
 
     def eval(self):
@@ -205,6 +197,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", default=64, type=int,  help='Inference batch size')
     parser.add_argument('--data_base_path',
                         help='Base path training, validation and test data', default=".")
+    parser.add_argument('--show_orig', help="Show original flow evaluation", action="store_true")
     
     args = parser.parse_args()
     print(args)

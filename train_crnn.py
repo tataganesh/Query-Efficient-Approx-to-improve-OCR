@@ -14,7 +14,7 @@ import torchvision.transforms as transforms
 from models.model_crnn import CRNN
 from datasets.ocr_dataset import OCRDataset
 from datasets.img_dataset import ImgDataset
-from utils import get_char_maps, get_ocr_helper, random_subset
+from utils import get_char_maps, get_ocr_helper, random_subset, compare_labels, get_char_maps, pred_to_string
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
 
@@ -47,7 +47,7 @@ class TrainCRNN():
         random.seed(torch.initial_seed())
 
         if self.dataset_name == 'pos':
-            self.train_set =  os.path.join(args.data_base_path, properties.pos_text_dataset_train)
+            self.train_set = os.path.join(args.data_base_path, properties.pos_text_dataset_train)
             self.validation_set = os.path.join(args.data_base_path, properties.pos_text_dataset_dev)
         elif self.dataset_name == 'vgg':
             self.train_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_train)
@@ -59,7 +59,6 @@ class TrainCRNN():
             properties.char_set)
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
-
 
         if self.crnn_ckpt_path is None:
             self.model = CRNN(self.vocab_size, False).to(self.device)
@@ -88,18 +87,22 @@ class TrainCRNN():
             self.validation_set, transform=transform, ocr_helper=self.ocr)
         else:
             dataset = ImgDataset(
-                self.train_set, transform=noisy_transform)
+                self.train_set, transform=noisy_transform, num_subset=args.train_subset)
             validation_set = ImgDataset(
-            self.validation_set, transform=transform)
-        rand_indices = torch.randperm(len(dataset))#[:properties.train_subset_size]
-        dataset_subset = torch.utils.data.Subset(dataset, rand_indices)
-        self.loader_train = torch.utils.data.DataLoader(
-            dataset_subset, batch_size=self.batch_size, drop_last=True, shuffle=True)
+            self.validation_set, transform=transform, num_subset=args.val_subset)
+        print(f"Train Dataset - {dataset}")
+        print(f"Validation Dataset - {validation_set}")
+        # rand_indices = torch.randperm(len(dataset))#[:properties.train_subset_size]
+        # dataset_subset = torch.utils.data.Subset(dataset, rand_indices)
+        # self.loader_train = torch.utils.data.DataLoader(
+        #     dataset_subset, batch_size=self.batch_size, drop_last=True, shuffle=True)
+        self.loader_train = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, drop_last=True, shuffle=True)
         
-        rand_indices = torch.randperm(len(validation_set))# [:properties.val_subset_size]
-        validation_set_subset = torch.utils.data.Subset(validation_set, rand_indices)
-        self.loader_validation = torch.utils.data.DataLoader(
-            validation_set_subset, batch_size=self.batch_size, drop_last=True)
+        # rand_indices = torch.randperm(len(validation_set))# [:properties.val_subset_size]
+        # validation_set_subset = torch.utils.data.Subset(validation_set, rand_indices)
+        # self.loader_validation = torch.utils.data.DataLoader(
+            # validation_set_subset, batch_size=self.batch_size, drop_last=True)
+        self.loader_validation =  torch.utils.data.DataLoader(validation_set,  batch_size=self.batch_size)
 
         self.train_set_size = len(self.loader_train.dataset)
         self.val_set_size = len(self.loader_validation.dataset)
@@ -149,13 +152,22 @@ class TrainCRNN():
 
             self.model.eval()
             validation_loss = 0
+            pred_correct_count = 0
+            pred_CER = 0
+            label_count = 0
             with torch.no_grad():
                 for images, labels in self.loader_validation:
                     scores, y, pred_size, y_size = self._call_model(
                         images, labels)
                     loss = self.loss_function(scores, y, pred_size, y_size)
+                    preds = pred_to_string(scores, labels, self.index_to_char)
+                    crt, cer = compare_labels(preds, labels)
+                    pred_correct_count += crt
+                    pred_CER += cer
+                    label_count += 1
                     validation_loss += loss.item()
                     validation_step += 1
+            CRNN_accuracy = pred_correct_count/self.val_set_size
             writer.add_scalar('Validation Loss', validation_loss /
                               (self.val_set_size//self.batch_size), epoch + 1)
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1),
@@ -163,9 +175,11 @@ class TrainCRNN():
                                                                                (self.train_set_size //
                                                                                 self.train_batch_size),
                                                                                validation_loss/(self.val_set_size//self.batch_size)))
+            print(f"Validation Accuracy - {CRNN_accuracy}, {pred_correct_count} / {self.val_set_size}")
 
             self.scheduler.step()
-            torch.save(self.model, self.crnn_model_path + "_" + str(epoch))
+            if (epoch + 1) % 5 == 0:
+                torch.save(self.model, self.crnn_model_path + "_" + str(epoch))
         writer.flush()
         writer.close()
 
@@ -186,6 +200,9 @@ if __name__ == "__main__":
                         default=42, help='random seed for shuffles')
     parser.add_argument('--ocr',
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
+    parser.add_argument('--train_subset', help="Specify subset of training samples", type=int)
+    parser.add_argument('--val_subset', help="Specify subset of validation samples", type=int)
+
     parser.add_argument('--dataset', default='pos',
                         help="performs training with given dataset [pos, vgg]")
     parser.add_argument('--random_std', action='store_false',
