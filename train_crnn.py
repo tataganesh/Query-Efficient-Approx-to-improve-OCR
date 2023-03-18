@@ -101,8 +101,8 @@ class TrainCRNN():
         # rand_indices = torch.randperm(len(validation_set))# [:properties.val_subset_size]
         # validation_set_subset = torch.utils.data.Subset(validation_set, rand_indices)
         # self.loader_validation = torch.utils.data.DataLoader(
-            # validation_set_subset, batch_size=self.batch_size, drop_last=True)
-        self.loader_validation =  torch.utils.data.DataLoader(validation_set,  batch_size=self.batch_size)
+        # validation_set_subset, batch_size=self.batch_size, drop_last=True)
+        self.loader_validation = torch.utils.data.DataLoader(validation_set,  batch_size=self.batch_size)
 
         self.train_set_size = len(self.loader_train.dataset)
         self.val_set_size = len(self.loader_validation.dataset)

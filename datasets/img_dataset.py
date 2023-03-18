@@ -6,13 +6,15 @@ from PIL import Image, ImageOps
 import tesserocr
 import numpy as np
 import random
-from utils import get_files
+from utils import get_files, get_ununicode
 import properties as properties
+import random
+
 
 
 class ImgDataset(Dataset):
 
-    def __init__(self, data_dir, transform=None, include_name=False, include_index=False):
+    def __init__(self, data_dir, transform=None, include_name=False, include_index=False, num_subset=None):
         self.transform = transform
         self.include_name = include_name
         self.include_index = include_index
@@ -21,8 +23,9 @@ class ImgDataset(Dataset):
         for img in unprocessed:
             if len(os.path.basename(img).split('_')[1]) <= properties.max_char_len:
                 self.files.append(img)
-        # with open('../sim_model/google_test_samples.txt', 'r') as file:
-        #     self.files = [line.strip() for line in file]
+        if num_subset:
+            random.seed(42)  # Allows reproducibility of train/val subsets
+            self.files = random.sample(self.files, num_subset)
 
     def __len__(self):
         return len(self.files)
@@ -36,6 +39,7 @@ class ImgDataset(Dataset):
             image = transforms.ToTensor()(image)
         file_name = os.path.basename(img_name)
         label = file_name.split('_')[1]
+        label = get_ununicode(label) # Test accuracy on Tesseract to confirm if it causes any issues
         if self.include_name:
             sample = [image, label, file_name]
         else:
