@@ -2,7 +2,6 @@ import torch
 import tesserocr
 import numpy as np
 from torchvision.transforms import ToPILImage
-import easyocr
 
 import properties as properties
 import utils
