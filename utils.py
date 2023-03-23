@@ -147,10 +147,12 @@ def get_file_list(in_dir, filter):
     return processed_list
 
 
-def get_files(in_dir, filter):
+def get_files(in_dir, filter, exclude_files=[]):
     processed_list = []
     for root, _, filenames in os.walk(in_dir):
         for f_name in filenames:
+            if f_name in exclude_files:
+                continue
             if f_name.endswith(tuple(filter)):
                 img_path = os.path.join(root, f_name)
                 processed_list.append(img_path)

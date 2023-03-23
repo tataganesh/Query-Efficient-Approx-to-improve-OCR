@@ -96,17 +96,18 @@ class EvalCRNN():
                         X_var, labels)            
             # ocr_lbl_pred = self.ocr.get_labels(X_var.cpu())
             ocr_lbl_crnn = pred_to_string(scores.cpu(), labels, self.index_to_char)
-            ocr_lbl_ori = self.ocr.get_labels(images.cpu())
+            if self.show_orig:
+                ocr_lbl_ori = self.ocr.get_labels(images.cpu())
+                ori_crt_count, o_cer = compare_labels(ocr_lbl_ori, labels)
+                ori_correct_count += ori_crt_count
+                ori_cer += o_cer
 
             if self.show_txt:
                 self._print_labels(labels, ocr_lbl_crnn, ocr_lbl_ori)
 
             crnn_crt_count, crn_cer = compare_labels(
                 ocr_lbl_crnn, labels)
-            ori_crt_count, o_cer = compare_labels(ocr_lbl_ori, labels)
             crnn_correct_count += crnn_crt_count
-            ori_correct_count += ori_crt_count
-            ori_cer += o_cer
             crnn_cer += crn_cer
 
             # if self.show_img:
@@ -115,10 +116,11 @@ class EvalCRNN():
         print()
         print('Correct count from CRNN: {:d}/{:d} ({:.5f})'.format(
             crnn_correct_count, len(self.dataset), crnn_correct_count/len(self.dataset)))
-        print('Correct count from Tesseract: {:d}/{:d} ({:.5f})'.format(
-            ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
-        print('Average CER using Tesseract: {:.5f}'.format(
-            ori_cer/len(self.dataset)))
+        if self.show_orig:
+            print('Correct count from Tesseract: {:d}/{:d} ({:.5f})'.format(
+                ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
+            print('Average CER using Tesseract: {:.5f}'.format(
+                ori_cer/len(self.dataset)))
         print('Average CER using CRNN: {:.5f}'.format(
             crnn_cer/len(self.dataset)))
 
