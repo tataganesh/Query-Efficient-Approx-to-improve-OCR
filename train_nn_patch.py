@@ -55,6 +55,7 @@ class TrainNNPrep():
         self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
         create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path, self.selectedsamples_path, self.entropies_path])
 
+        self.report_test_perf = args.report_test_perf
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
         self.std = args.std
@@ -125,7 +126,7 @@ class TrainNNPrep():
         self.query_dim = args.query_dim
         self.attn_activation = args.attn_activation
         
-        self.attention_model = HistoryAttention(len(properties.char_set),self.emb_dim, self.query_dim, self.window_size, self.attn_activation, args.is_emb_train).to(self.device)
+        self.attention_model = HistoryAttention(len(properties.char_set),self.emb_dim, self.query_dim, self.window_size, self.attn_activation).to(self.device)
         self.attn_outputs = defaultdict(lambda : [])     
         self.dataset = PatchDataset(
             self.train_set, pad=True, include_name=True, num_subset=self.train_subset_size)
@@ -178,8 +179,7 @@ class TrainNNPrep():
         conc_label = ''.join(labels)
         y = [self.char_to_index[c] for c in conc_label]
         y_var = torch.tensor(y, dtype=torch.int)
-        return scores, y_var, out_size, y_size
-    
+        return scores, y_var, out_size, y_size   
 
     def _get_loss(self, scores, y, pred_size, y_size, img_preds):
         pri_loss = self.primary_loss_fn(scores, y, pred_size, y_size)
@@ -194,8 +194,6 @@ class TrainNNPrep():
             noisy_imgs.append(noiser(img))
         return torch.stack(noisy_imgs)
 
-        
-
     def train(self):
         noiser = AddGaussianNoice(
             std=self.std, is_stochastic=self.is_random_std)
@@ -203,7 +201,8 @@ class TrainNNPrep():
         step = 0
         validation_step = 0
         batch_step = 0
-        total_bb_calls = 0
+        total_train_bb_calls = 0
+        total_train_val_bb_calls = 0
         total_crnn_updates = 0
         best_val_acc = 0
         best_val_epoch = 0
@@ -314,7 +313,7 @@ class TrainNNPrep():
                                     loss_weights_mean += modified_weights_list.mean().item()
                                 loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights) + attn_penalty
                                     
-                                total_bb_calls += len(ocr_labels)
+                                total_train_bb_calls += len(ocr_labels)
                                 epoch_bb_calls += len(ocr_labels)
                             else:
                                 noisy_imgs = self.add_noise(text_crops, noiser)
@@ -323,7 +322,7 @@ class TrainNNPrep():
                                     noisy_imgs, ocr_labels)
                                 loss = self.primary_loss_fn(
                                     scores, y, pred_size, y_size)
-                                total_bb_calls += text_crops.shape[0]
+                                total_train_bb_calls += text_crops.shape[0]
                                 epoch_bb_calls += text_crops.shape[0]
                            
                             if self.inner_limit:
@@ -415,7 +414,7 @@ class TrainNNPrep():
             tess_correct_count = 0
             pred_CER = 0
             tess_CER = 0
-            label_count = 0
+            val_label_count = 0
             
             with torch.no_grad():
                 for image, labels_dict in self.validation_set:
@@ -437,22 +436,25 @@ class TrainNNPrep():
                     tess_crt, tess_cer = compare_labels(ocr_labels, labels)
                     pred_correct_count += crt
                     tess_correct_count += tess_crt
-                    label_count += len(labels)
+                    val_label_count += len(labels)
                     pred_CER += cer
                     tess_CER += tess_cer
                     validation_step += 1
-
-            CRNN_accuracy = pred_correct_count/label_count
-            OCR_accuracy = tess_correct_count/label_count
+            print(f"Validation Dataset Calls - {val_label_count}")
+            CRNN_accuracy = pred_correct_count/val_label_count
+            OCR_accuracy = tess_correct_count/val_label_count
             CRNN_cer = pred_CER/self.val_set_size
             OCR_cer = tess_CER/self.val_set_size
             val_loss = validation_loss / self.val_set_size
+            train_val_bb_calls = val_label_count
+            total_train_val_bb_calls += epoch_bb_calls + val_label_count
 
             # Log all metrics
             wandb.log({"CRNN_accuracy": CRNN_accuracy, f"{self.ocr_name}_accuracy": OCR_accuracy, 
                     "CRNN_CER": CRNN_cer, f"{self.ocr_name}_cer": OCR_cer, "Epoch": epoch + 1,
                     "train_loss": train_loss, "val_loss": val_loss, 
-                    "Total Black-Box Calls": total_bb_calls, "Black-Box Calls":  epoch_bb_calls,
+                    "Total Black-Box Calls": total_train_bb_calls, "Black-Box Calls":  epoch_bb_calls,
+                    "Train + Val BB Calls": train_val_bb_calls, "Total Train + Val BB Calls": total_train_val_bb_calls,
                     "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates,
                     "CRNN_loss": crnn_train_loss, "Attention_loss": final_attn_loss, "Loss Weights Mean": loss_weights_mean})
 
@@ -463,28 +465,28 @@ class TrainNNPrep():
                 img.save(os.path.join(self.img_out_path, 'out_original.png'), 'PNG')
 
             print("CRNN correct count: %d; %s correct count: %d; (validation set size:%d)" % (
-                pred_correct_count, self.ocr_name, tess_correct_count, label_count))
+                pred_correct_count, self.ocr_name, tess_correct_count, val_label_count))
             print("Epoch: %d/%d => Training loss: %f | Validation loss: %f" % ((epoch + 1), self.max_epochs,
                                                                                training_loss / self.train_set_size,
                                                                                validation_loss/self.val_set_size))
-            prep_ckpt_path = os.path.join(self.ckpt_base_path, "Prep_model_"+str(epoch))
+            print(f"Total OCR Calls Count: {self.ocr.count_calls}")
+            prep_ckpt_path = os.path.join(self.ckpt_base_path, f"Prep_model_{epoch}_{OCR_accuracy*100:.2f}")
             torch.save(self.prep_model, prep_ckpt_path)
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
-            # if epoch % 5 and self.inner_limit_skip and self.window_size > 1:
-            #     torch.save(self.attention_model, os.path.join(self.ckpt_base_path, 
-            #            "attn_model_" + str(epoch)))
-                
             
             if OCR_accuracy > best_val_acc:
                 best_val_acc = OCR_accuracy
                 best_val_ckpt_path = prep_ckpt_path
                 best_val_epoch = epoch
-        
-        summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
+        if self.report_test_perf:
+            summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
+        else:
+            summary_metrics = dict()
         summary_metrics["best_val_acc"] = best_val_acc
         summary_metrics["best_val_epoch"] = best_val_epoch
-        wandb.run.summary.update(summary_metrics)  
+        wandb.run.summary.update(summary_metrics)
+        print("Training Completed.")
         
 
 
@@ -547,7 +549,7 @@ if __name__ == "__main__":
     parser.add_argument('--emb_dim', help='Word Embedding size', type=int, default=256)
     parser.add_argument('--attn_penalty_coef', help='Coefficient for attention penalty', type=float, default=0)
     parser.add_argument('--attn_activation', help='Activation function after last layer of self attention module', type=str, default='sigmoid', choices=['sigmoid', 'softmax', 'relu'])
-    parser.add_argument('--is_emb_train', help='Boolean to indicate if word embeddings are trainable.', action='store_true')
+    parser.add_argument('--report_test_perf', action='store_true', help='Flag to indicate if test performance needs to be reported.')
 
 
     args = parser.parse_args()
