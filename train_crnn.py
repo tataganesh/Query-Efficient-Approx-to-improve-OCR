@@ -206,7 +206,7 @@ class TrainCRNN:
 
             self.scheduler.step()
             # Save last model specifically
-            if (epoch + 1) == 200:
+            if (epoch + 1) == self.max_epochs:
                 torch.save(
                     self.model,
                     f"{self.crnn_model_path}_{epoch}_{CRNN_accuracy*100:.2f}",
