@@ -111,7 +111,7 @@ class EvalPrep():
         lbl_count = 0
         counter = 0
 
-        for image, labels_dict in self.dataset:
+        for i, (image, labels_dict) in enumerate(self.dataset):
             text_crops, labels = get_text_stack(
                 image.detach(), labels_dict, self.input_size)
             lbl_count += len(labels)
@@ -145,6 +145,8 @@ class EvalPrep():
             if self.show_txt:
                 self._print_labels(labels, pred_labels, ocr_labels)
             counter += 1
+            if not i % 100:
+                print(f"{i} samples completed")
 
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(

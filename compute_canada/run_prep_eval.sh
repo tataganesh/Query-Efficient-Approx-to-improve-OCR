@@ -7,11 +7,12 @@
 
 
 module load StdEnv/2020 tesseract/4.1.0
-source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
+# VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate"
+VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/ocr_calls_new/bin/activate"
+source $VENV_PATH
 
 
-
-EXP_ID=374
+EXP_ID=444
 
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="patch_dataset"
@@ -31,10 +32,11 @@ fi
 # python -u eval_prep.py --prep_path ~/scratch/experiment_9/ckpts/ --dataset vgg --prep_model_name Prep_model_26 --data_base_path $SLURM_TMPDIR
 # cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
+PREP_PATH="/home/ganesh/scratch/experiment_$EXP_ID/ckpts"
 # [ ! -f "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/Prep_model_4" ] && echo "File not found!" 
-for i in 47
+for i in Prep_model_39_70.23
 do
     echo "Running $i preprocessor"
     # python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/" --dataset pos  --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
-    python -u eval_prep.py --prep_path "/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_249/ckpts/Prep_model_44" --dataset pos --data_base_path $SLURM_TMPDIR --ocr gvision
+    python -u eval_prep.py --prep_path "$PREP_PATH/$i" --dataset pos --data_base_path $SLURM_TMPDIR --ocr gvision
 done

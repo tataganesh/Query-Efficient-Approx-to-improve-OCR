@@ -15,6 +15,8 @@ class EocrHelper():
         # this works only becuase of a hack done in library. If fails remove gpu='cuda:1'
         # self.reader = easyocr.Reader(['en'], gpu='cuda:1')
         self.reader = easyocr.Reader(['en'], gpu=True)
+        self.count_calls = 0
+
 
     def get_labels(self, imgs):
         labels = []
@@ -38,6 +40,7 @@ class EocrHelper():
             if len(label) > properties.max_char_len:
                 label = self.empty_char
             labels.append(label)
+        self.count_calls += len(labels)
         return labels
 
     def get_string(self, img):

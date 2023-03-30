@@ -18,15 +18,12 @@ from models.model_unet import UNet
 from models.model_attention import HistoryAttention
 from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history, generate_loss_weights, generate_weights_levenshtein
 from datasets.patch_dataset import PatchDataset
-from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs
+from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs, attention_debug
 from utils import get_text_stack, get_ocr_helper, compare_labels
-from eval_utils import prep_eval
 from transform_helper import AddGaussianNoice
 import properties as properties
-from pprint import pprint
 import numpy as np
 import wandb
-from pprint import pprint
 from collections import defaultdict
 wandb.Table.MAX_ROWS = 100000
 
@@ -55,7 +52,7 @@ class TrainNNPrep():
         self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
         create_dirs([self.exp_base_path, self.ckpt_base_path, self.tensorboard_log_path, self.img_out_path, self.cers_base_path, self.tracked_labels_path, self.selectedsamples_path, self.entropies_path])
 
-        self.report_test_perf = args.report_test_perf
+        self.update_CRNN = args.update_CRNN
         self.sec_loss_scalar = args.scalar
         self.ocr_name = args.ocr
         self.std = args.std
@@ -70,7 +67,6 @@ class TrainNNPrep():
         self.start_epoch = args.start_epoch
         self.selection_method = args.minibatch_subset
         self.window_size = args.tracking_window
-        self.attn_penalty_coef = args.attn_penalty_coef
 
         self.train_batch_prop = 1
     
@@ -210,7 +206,7 @@ class TrainNNPrep():
 
 
         for epoch in range(self.start_epoch, self.max_epochs):
-            if self.selection_method and "global" in self.selection_method: # Criterion to CHECK if this is a global or local selection method
+            if self.selection_method and "global" in self.selection_method:  # Criterion to CHECK if this is a global or local selection method
                 self.sampler.select_samples()
             training_loss = 0.0
             attn_loss = 0.0
@@ -241,7 +237,6 @@ class TrainNNPrep():
                     pred = self.prep_model(X_var)[0]
                     text_crops_all, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
-                    sample_indices = None
                     folder_name, file_name = name.split("/")[-2:]
                     file_name = file_name.split(".")[0]
                     text_strip_names = list()
@@ -265,16 +260,13 @@ class TrainNNPrep():
                         skipped_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
                         skipped_mask[bb_sample_indices] = False
                         skipped_text_crops = text_crops_all[skipped_mask]
-                        labels_skipped = [labels[i] for i in range(skipped_mask.shape[0]) if skipped_mask[i]]
-                    
+                        labels_skipped = [labels[i] for i in range(skipped_mask.shape[0]) if skipped_mask[i]]      
                     else:
                         text_crops = text_crops_all.detach().cpu()
                         text_crop_names = text_strip_names
                         skipped_mask = torch.zeros(text_crops_all.shape[0], dtype=bool)
                     
-                    temp_loss = 0
-                    temp_attn_loss = 0
-                    attn_penalty = torch.tensor(0.0)
+                    crnn_approx_loss = 0
                     if epoch_print_flag:
                         print(f"Total Samples - {text_crops_all.shape[0]}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
@@ -288,30 +280,19 @@ class TrainNNPrep():
                                 ocr_labels = self.ocr.get_labels(text_crops)
                                 # loss_weights, modified_weights_list = generate_loss_weights(self, text_crop_names)
                                 loss_weights, modified_weights_list = generate_weights_levenshtein(self, text_crop_names)
-                                add_labels_to_history(self, text_crop_names, ocr_labels)  
+                                add_labels_to_history(self, text_crop_names, ocr_labels) 
                                 if epoch_print_flag:
-                                    print(f"Loss Weights = {loss_weights}")
-                                    print("\nHistory")
-                                    for crop_name in text_crop_names:
-                                        if crop_name in self.tracked_labels:
-                                            print(self.tracked_labels[crop_name])
-                                    print(f"\nAttention Scores")
-                                    pprint(self.attn_outputs["loss_w_layer"])
-                                    print(f"\nLinear Layer Weights")
-                                    print(self.attention_model.loss_coef_layer.weight, self.attention_model.loss_coef_layer.bias)
-                                    print("\n Word Embeddings")
-                                    print(self.attn_outputs["word_embs"])
+                                    attention_debug(self, loss_weights)
+                                    
                                 self.attn_forward_hook1.remove()
                                 self.attn_forward_hook2.remove()
 
                                 # Peek at history of OCR labels for each strip and construct weighted CTC loss
                                 target_batches = generate_ctc_target_batches(self, text_crop_names)
                                 scores, pred_size = call_crnn(self, text_crops)
-                                ones_tensor = torch.ones_like(modified_weights_list)
-                                if modified_weights_list.shape[0] > 0: # Calculate attention penalty/loss weights mean only if attention model has been used. 
-                                    attn_penalty = self.attn_penalty_coef * (self.attn_loss_fn(modified_weights_list, ones_tensor))
+                                if modified_weights_list.shape[0] > 0:  # Calculate attention penalty/loss weights mean only if attention model has been used. 
                                     loss_weights_mean += modified_weights_list.mean().item()
-                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights) + attn_penalty
+                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
                                     
                                 total_train_bb_calls += len(ocr_labels)
                                 epoch_bb_calls += len(ocr_labels)
@@ -326,13 +307,11 @@ class TrainNNPrep():
                                 epoch_bb_calls += text_crops.shape[0]
                            
                             if self.inner_limit:
-                                temp_loss += loss.item()
-                                temp_attn_loss += attn_penalty.item()
+                                crnn_approx_loss += loss.item()
                                 loss.backward()
 
                     inner_limit = max(1, self.inner_limit)
-                    CRNN_training_loss += temp_loss/inner_limit
-                    attn_loss += temp_attn_loss/inner_limit
+                    CRNN_training_loss += crnn_approx_loss/inner_limit
                 epoch_print_flag = False
                 if self.inner_limit:
                     self.optimizer_crnn.step()
@@ -351,7 +330,6 @@ class TrainNNPrep():
                     image = image.unsqueeze(0)
                     X_var = image.to(self.device)
                     img_out = self.prep_model(X_var)[0]
-                    # img_out = image_preds[i]
                     n_text_crops, labels = get_text_stack(
                         img_out, labels_dict, self.input_size)
 
@@ -362,7 +340,6 @@ class TrainNNPrep():
                     loss.backward()
                     # Update last seen prediction of image
                     model_gen_labels = pred_to_string(scores, labels, self.index_to_char)
-
                     for i in range(len(labels)):
                         self.model_labels_last[name + "_" + str(i)] = model_gen_labels[i]
 
@@ -370,7 +347,6 @@ class TrainNNPrep():
                     if step % 100 == 0:
                         print("Iteration: %d => %f" % (step, loss.item()))
                     step += 1
-
                     
                     if self.selection_method and len(text_strip_names):
                         batch_cers = list()
@@ -381,29 +357,31 @@ class TrainNNPrep():
                         
                         if self.selection_method == "uniformEntropy":
                             update_entropies(self, scores, text_strip_names)
-                # self.optimizer_crnn.step()
+                if self.update_CRNN:
+                    self.optimizer_crnn.step()
                 self.optimizer_prep.step()
-                                
-            with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
-                json.dump(self.tracked_labels, f) 
+            
+            if self.selection_method:                               
+                with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
+                    json.dump(self.tracked_labels, f) 
 
-            with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
-                json.dump(self.tracked_labels, f)
-                
-            with open(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), 'w') as f:
-                json.dump(self.selected_samples, f)
+                with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
+                    json.dump(self.tracked_labels, f)
+                    
+                with open(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), 'w') as f:
+                    json.dump(self.selected_samples, f)
 
-            with open(os.path.join(self.selectedsamples_path, f"selected_samples_{epoch}.json"), 'w') as f:
-                json.dump(self.selected_samples, f)
+                with open(os.path.join(self.selectedsamples_path, f"selected_samples_{epoch}.json"), 'w') as f:
+                    json.dump(self.selected_samples, f)
+                    
+                with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
+                    json.dump(self.sampler.cers, f)
                 
-            with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
-                json.dump(self.sampler.cers, f)
-                
-            wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
-            wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
+                wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
+                wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
             print(f"Epoch BB calls - {epoch_bb_calls}")
             train_loss =  training_loss / self.train_set_size
-            crnn_train_loss = CRNN_training_loss / epoch_bb_calls
+            crnn_train_loss = CRNN_training_loss / max(1, epoch_bb_calls)
             final_attn_loss = attn_loss / self.train_set_size
             loss_weights_mean = loss_weights_mean / self.train_set_size
 
@@ -421,7 +399,6 @@ class TrainNNPrep():
                     image = image.unsqueeze(0)
                     X_var = image.to(self.device)
                     img_out = self.prep_model(X_var)[0]
-
                     n_text_crops, labels = get_text_stack(
                         img_out, labels_dict, self.input_size)
                     scores, y, pred_size, y_size = self._call_model(
@@ -446,7 +423,7 @@ class TrainNNPrep():
             CRNN_cer = pred_CER/self.val_set_size
             OCR_cer = tess_CER/self.val_set_size
             val_loss = validation_loss / self.val_set_size
-            train_val_bb_calls = val_label_count
+            train_val_bb_calls = val_label_count + epoch_bb_calls
             total_train_val_bb_calls += epoch_bb_calls + val_label_count
 
             # Log all metrics
@@ -479,10 +456,9 @@ class TrainNNPrep():
                 best_val_acc = OCR_accuracy
                 best_val_ckpt_path = prep_ckpt_path
                 best_val_epoch = epoch
-        if self.report_test_perf:
-            summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
-        else:
-            summary_metrics = dict()
+        # To be removed: Do not report test-set performance
+        # summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
+        summary_metrics = dict()
         summary_metrics["best_val_acc"] = best_val_acc
         summary_metrics["best_val_epoch"] = best_val_epoch
         wandb.run.summary.update(summary_metrics)
@@ -547,9 +523,8 @@ if __name__ == "__main__":
     parser.add_argument('--tracking_window', help='Window Size if tracking is enabled', type=int, default=1)
     parser.add_argument('--query_dim', help='Dimension of query vector in self attention ', type=int, default=32)
     parser.add_argument('--emb_dim', help='Word Embedding size', type=int, default=256)
-    parser.add_argument('--attn_penalty_coef', help='Coefficient for attention penalty', type=float, default=0)
     parser.add_argument('--attn_activation', help='Activation function after last layer of self attention module', type=str, default='sigmoid', choices=['sigmoid', 'softmax', 'relu'])
-    parser.add_argument('--report_test_perf', action='store_true', help='Flag to indicate if test performance needs to be reported.')
+    parser.add_argument('--update_CRNN', action='store_true', help='Update CRNN when updating preprocessor. Only relevant IF THE OCR IS NEVER CALLED.')
 
 
     args = parser.parse_args()

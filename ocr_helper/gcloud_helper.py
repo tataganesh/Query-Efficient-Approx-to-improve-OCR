@@ -115,21 +115,24 @@ class GcloudHelper:
             response = json.load(
                 open("/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/output.json"))
         else:
-            response = self.get_response(img_bytes)
+            image = vision.Image(content=img_bytes)
+            response = self.client.text_detection(image)
         self.count_calls += 1
         print("Response Received")
         end = time.time()
         print(f"Time taken - {(end - start) * 1000}")
-        all_text_responses = response["responses"][0]["textAnnotations"]
+        texts = response.text_annotations
+        
         # Get all words + bboxes for full document image
-        for text_info in all_text_responses:
+        for text_info in texts:
+            verts = text_info.bounding_poly.vertices
             bbox = dict()
-            bbox["label"] = text_info["description"]
-            bbox_info = text_info["boundingPoly"]["vertices"]
-            bbox["x1"], bbox["y1"] = bbox_info[0].get("x", 0), bbox_info[0].get("y", 0)
-            bbox["x2"], bbox["y2"] = bbox_info[1].get("x", w - 1), bbox_info[1].get("y", 0)
-            bbox["x3"], bbox["y3"] = bbox_info[2].get("x", w - 1), bbox_info[2].get("y", h - 1)
-            bbox["x4"], bbox["y4"] = bbox_info[3].get("x", 0), bbox_info[3].get("y", h - 1)
+            bbox["label"] = text_info.description
+            getattr(verts[0], "x", 0), getattr(verts[0], "y", 0)
+            bbox["x1"], bbox["y1"] = getattr(verts[0], "x", 0), getattr(verts[0], "y", 0)
+            bbox["x2"], bbox["y2"] = getattr(verts[1], "x", w-1), getattr(verts[1], "y", 0)
+            bbox["x3"], bbox["y3"] = getattr(verts[2], "x", w - 1), getattr(verts[2], "y", h - 1)
+            bbox["x4"], bbox["y4"] = getattr(verts[3], "x", 0), getattr(verts[3], "y", h - 1)
             label_bboxes.append(bbox)
         return label_bboxes
 
@@ -146,5 +149,5 @@ if __name__ == "__main__":
     imgs = torch.cat([img])
 
     obj = GcloudHelper()
-    labels = obj.get_labels(imgs)
+    labels = obj.get_labels_fullimage(imgs)
     print(labels)
