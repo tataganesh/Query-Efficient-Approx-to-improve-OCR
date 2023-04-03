@@ -2,7 +2,6 @@ import torch
 import tesserocr
 import numpy as np
 from torchvision.transforms import ToPILImage
-import easyocr
 
 import properties as properties
 import utils
@@ -16,6 +15,7 @@ class TessHelper():
             lang='eng', psm=tesserocr.PSM.SINGLE_LINE, path=properties.tesseract_path, oem=tesserocr.OEM.LSTM_ONLY)
         self.api_single_block = tesserocr.PyTessBaseAPI(
             lang='eng', psm=tesserocr.PSM.SINGLE_BLOCK, path=properties.tesseract_path)
+        self.count_calls = 0
 
     def get_labels(self, imgs):
         labels = []
@@ -33,6 +33,7 @@ class TessHelper():
             if len(label) > properties.max_char_len:
                 label = self.empty_char
             labels.append(label)
+        self.count_calls += len(labels)
         return labels
 
     def get_string(self, img):

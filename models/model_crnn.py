@@ -4,7 +4,7 @@ import torch.nn.functional as fn
 
 class CRNN(nn.Module):
 
-    def __init__(self, vocab_size, multi_gpu = True):
+    def __init__(self, vocab_size, multi_gpu=True):
         super(CRNN, self).__init__()
         self.lstm = nn.LSTM(512, 256, 2, bidirectional=True)
         self.linear = nn.Linear(512, vocab_size)
@@ -22,7 +22,7 @@ class CRNN(nn.Module):
 
     def map_to_sequence(self, map):
         batch, channel, height, width = map.size()
-        sequence = map.permute(3, 0, 1, 2) #(batch, channel, height, width) -> (width , batch, channel, height)
+        sequence = map.permute(3, 0, 1, 2) # (batch, channel, height, width) -> (width , batch, channel, height)
         sequence.contiguous()
         sequence = sequence.view(width,batch,-1) #(width , batch, channel, height) -> (seq_len, batch, input_size)
         return sequence

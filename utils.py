@@ -11,8 +11,9 @@ from unidecode import unidecode
 import torchvision.utils as utils
 
 import ocr_helper.tess_helper as tess_helper
-import ocr_helper.eocr_helper as eocr_helper
+# import ocr_helper.eocr_helper as eocr_helper
 import ocr_helper.gcloud_helper as gcloud_helper
+from pprint import pprint
 
 def get_char_maps(vocabulary=None):
     if vocabulary is None:
@@ -147,10 +148,12 @@ def get_file_list(in_dir, filter):
     return processed_list
 
 
-def get_files(in_dir, filter):
+def get_files(in_dir, filter, exclude_files=[]):
     processed_list = []
     for root, _, filenames in os.walk(in_dir):
         for f_name in filenames:
+            if f_name in exclude_files:
+                continue
             if f_name.endswith(tuple(filter)):
                 img_path = os.path.join(root, f_name)
                 processed_list.append(img_path)
@@ -196,3 +199,17 @@ def create_dirs(dirs):
     for x in dirs:
         if not os.path.exists(x):
             os.mkdir(x)
+
+
+def attention_debug(self, loss_weights, text_crop_names):
+    print(f"Loss Weights = {loss_weights}")
+    print("\nHistory")
+    for crop_name in text_crop_names:
+        if crop_name in self.tracked_labels:
+            print(self.tracked_labels[crop_name])
+    print("\nAttention Scores")
+    pprint(self.attn_outputs["loss_w_layer"])
+    print("\nLinear Layer Weights")
+    print(self.attention_model.loss_coef_layer.weight, self.attention_model.loss_coef_layer.bias)
+    print("\n Word Embeddings")
+    print(self.attn_outputs["word_embs"])

@@ -129,6 +129,7 @@ def weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights=None
         else:
             loss_weights_subset = loss_weights[img_indices, i]
             ctc_losses = self.primary_loss_fn_sample_wise(scores_subset, target, pred_size_subset, target_size)
+            #TODO: ctc_losses should be divided by len(target) before computing the mean. More info https://pytorch.org/docs/stable/generated/torch.nn.CTCLoss.html
             all_ctc_losses.append(torch.mean(loss_weights_subset*ctc_losses))
     return sum(all_ctc_losses)
 

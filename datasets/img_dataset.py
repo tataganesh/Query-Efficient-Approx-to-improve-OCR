@@ -19,7 +19,7 @@ class ImgDataset(Dataset):
         self.include_name = include_name
         self.include_index = include_index
         self.files = []
-        unprocessed = get_files(data_dir, ['png', 'jpg'])
+        unprocessed = get_files(data_dir, ['png', 'jpg'], exclude_files=["22_✔_786.png", "162_✓_467.png", "26_✓_receipt_00627.png", "61_✓_145.png", '19__V_receipt_00188.png'])
         for img in unprocessed:
             if len(os.path.basename(img).split('_')[1]) <= properties.max_char_len:
                 self.files.append(img)
@@ -40,6 +40,8 @@ class ImgDataset(Dataset):
         file_name = os.path.basename(img_name)
         label = file_name.split('_')[1]
         label = get_ununicode(label) # Test accuracy on Tesseract to confirm if it causes any issues
+        if len(label) > properties.max_char_len:  # Handle cases where label is much longer than max time steps. Written primarily for Google Vision API outputs
+            label = properties.empty_char 
         if self.include_name:
             sample = [image, label, file_name]
         else:
