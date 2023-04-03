@@ -13,10 +13,12 @@ source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="gcp_all_textareas"
+DATASET_PATH="/home/ganesh/projects/def-nilanjan/ganesh/datasets/gcloud_vision/no_prep_original/$DATASET_NAME.zip"
+echo "Dataset Path - $DATASET_PATH"
 if [ ! -d $DATA_PATH ]
 then
 	echo "Extraction started"
-	cp "/home/ganesh/projects/def-nilanjan/ganesh/datasets/gcloud_vision/no_prep_original/$DATASET_NAME.zip" $SLURM_TMPDIR/
+	cp $DATASET_PATH $SLURM_TMPDIR/
 	cd $SLURM_TMPDIR
 	unzip $DATASET_NAME.zip >> /dev/null
 	# unzip $DATASET_NAME.zip -d $DATASET_NAME >> /dev/null

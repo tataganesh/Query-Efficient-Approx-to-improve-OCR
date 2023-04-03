@@ -61,7 +61,7 @@ class TrainNNPrep():
         python_random.seed(self.random_seed)
         np.random.seed(self.random_seed)
 
-        self.model_labels_last = dict() # Seems inefficient
+        self.model_labels_last = dict()  # Seems inefficient
         self.train_set = os.path.join(args.data_base_path, properties.patch_dataset_train)
         self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
@@ -388,6 +388,8 @@ class TrainNNPrep():
             self.prep_model.eval()
             self.crnn_model.eval()
             pred_correct_count = 0
+            matching_correct_count = 0
+            matching_cer = 0
             validation_loss = 0
             tess_correct_count = 0
             pred_CER = 0
@@ -411,6 +413,9 @@ class TrainNNPrep():
                     ocr_labels = self.ocr.get_labels(n_text_crops.cpu())
                     crt, cer = compare_labels(preds, labels)
                     tess_crt, tess_cer = compare_labels(ocr_labels, labels)
+                    matching_crt, matching_cer = compare_labels(preds, ocr_labels) # Compare OCR labels and CRNN output
+                    matching_correct_count += matching_crt
+                    matching_cer += matching_cer
                     pred_correct_count += crt
                     tess_correct_count += tess_crt
                     val_label_count += len(labels)
@@ -420,8 +425,10 @@ class TrainNNPrep():
             print(f"Validation Dataset Calls - {val_label_count}")
             CRNN_accuracy = pred_correct_count/val_label_count
             OCR_accuracy = tess_correct_count/val_label_count
+            CRNN_OCR_matching_acc = matching_correct_count/val_label_count
             CRNN_cer = pred_CER/self.val_set_size
             OCR_cer = tess_CER/self.val_set_size
+            CRNN_OCR_matching_cer = matching_cer/self.val_set_size
             val_loss = validation_loss / self.val_set_size
             train_val_bb_calls = val_label_count + epoch_bb_calls
             total_train_val_bb_calls += epoch_bb_calls + val_label_count
@@ -433,7 +440,8 @@ class TrainNNPrep():
                     "Total Black-Box Calls": total_train_bb_calls, "Black-Box Calls":  epoch_bb_calls,
                     "Train + Val BB Calls": train_val_bb_calls, "Total Train + Val BB Calls": total_train_val_bb_calls,
                     "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates,
-                    "CRNN_loss": crnn_train_loss, "Attention_loss": final_attn_loss, "Loss Weights Mean": loss_weights_mean})
+                    "CRNN_loss": crnn_train_loss, "Attention_loss": final_attn_loss, "Loss Weights Mean": loss_weights_mean, 
+                    "CRNN_OCR_Matching_ACC": CRNN_OCR_matching_acc, "CRNN_OCR_Matching_CER": CRNN_OCR_matching_cer})
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
             img.save(os.path.join(self.img_out_path, 'out_'+str(epoch)+'.png'), 'PNG')
