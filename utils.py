@@ -202,6 +202,9 @@ def create_dirs(dirs):
 
 
 def attention_debug(self, loss_weights, text_crop_names):
+    self.attn_outputs = defaultdict(lambda: [])
+    self.attn_forward_hook1 = self.attention_model.loss_coef_layer.register_forward_hook(self.get_layer_input('loss_w_layer'))
+    self.attn_forward_hook2 = self.attention_model.Wq.register_forward_hook(self.get_layer_input('word_embs'))
     print(f"Loss Weights = {loss_weights}")
     print("\nHistory")
     for crop_name in text_crop_names:
@@ -213,3 +216,11 @@ def attention_debug(self, loss_weights, text_crop_names):
     print(self.attention_model.loss_coef_layer.weight, self.attention_model.loss_coef_layer.bias)
     print("\n Word Embeddings")
     print(self.attn_outputs["word_embs"])
+    self.attn_forward_hook1.remove()
+    self.attn_forward_hook2.remove()
+    
+
+def get_layer_input(self, name):
+    def hook(model, input, output):
+        self.attn_outputs[name].append(input[0].detach())
+    return hook

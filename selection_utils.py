@@ -10,7 +10,7 @@ def calc_entropy(probs, num_classes=95):
     e_term = 0.000001  # To avoid log(0) problems
     log_prob = torch.log(probs + e_term)
     entropy = -(probs * log_prob).sum(dim=1)
-    normalized_entropy = entropy/torch.log(torch.tensor(num_classes)) # Normalized Entropy
+    normalized_entropy = entropy/torch.log(torch.tensor(num_classes))  # Normalized Entropy
     return normalized_entropy    
 
 
@@ -24,7 +24,6 @@ def update_entropies(self, crnn_scores, names):
     self.sampler.update_entropies(mean_ent_all, names)
         
         
-
 def sampleUsingEstimates(images, labels, num_samples, names, estimates):
     """Get 
 
