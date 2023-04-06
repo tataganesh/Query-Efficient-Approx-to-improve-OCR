@@ -6,6 +6,7 @@ import os
 import math
 import json
 import random as python_random
+import shutil
 
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
@@ -195,7 +196,6 @@ class TrainNNPrep():
         total_crnn_updates = 0
         best_val_acc = 0
         best_val_epoch = 0
-        best_val_ckpt_path = None
 
         for epoch in range(self.start_epoch, self.max_epochs):
             if self.selection_method and "global" in self.selection_method:  # Criterion to CHECK if this is a global or local selection method
@@ -434,11 +434,14 @@ class TrainNNPrep():
             torch.save(self.prep_model, prep_ckpt_path)
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
-            
+            best_prep_ckpt_path = os.path.join(self.ckpt_base_path, f"Prep_model_best")
             if OCR_accuracy > best_val_acc:
                 best_val_acc = OCR_accuracy
-                best_val_ckpt_path = prep_ckpt_path
                 best_val_epoch = epoch
+                # torch.save(self.prep_model, best_prep_ckpt_path) # Ideally, copy previously saved model using shutil
+                shutil.copyfile(prep_ckpt_path, best_prep_ckpt_path)
+                wandb.save(best_prep_ckpt_path)
+                
         # To be removed: Do not report test-set performance
         # summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
         summary_metrics = dict()
