@@ -3,6 +3,7 @@ import torch
 import Levenshtein
 import numpy as np
 import sys
+
 sys.path.insert(0, "datasets")
 
 import torchvision.transforms as transforms
@@ -11,14 +12,19 @@ from unidecode import unidecode
 import torchvision.utils as utils
 
 import ocr_helper.tess_helper as tess_helper
-# import ocr_helper.eocr_helper as eocr_helper
+import ocr_helper.eocr_helper as eocr_helper
 import ocr_helper.gcloud_helper as gcloud_helper
 from pprint import pprint
+import json
 
 def get_char_maps(vocabulary=None):
     if vocabulary is None:
-        vocab = ['-']+[chr(ord('a')+i) for i in range(26)]+[chr(ord('A')+i)
-                                                            for i in range(26)]+[chr(ord('0')+i) for i in range(10)]
+        vocab = (
+            ["-"]
+            + [chr(ord("a") + i) for i in range(26)]
+            + [chr(ord("A") + i) for i in range(26)]
+            + [chr(ord("0") + i) for i in range(10)]
+        )
     else:
         vocab = vocabulary
     char_to_index = {}
@@ -35,7 +41,7 @@ def get_char_maps(vocabulary=None):
 def save_img(images, name, dir, nrow=8):
     img = utils.make_grid(images, nrow=nrow)
     img = transforms.ToPILImage()(img)
-    img.save(os.path.join(dir, name + '.png'), 'PNG')
+    img.save(os.path.join(dir, name + ".png"), "PNG")
 
 
 def show_img(images, title="Figure", nrow=8):
@@ -47,19 +53,19 @@ def show_img(images, title="Figure", nrow=8):
 
 
 def get_ununicode(text):
-    text = text.replace('_', '-')
-    text = text.replace('`', "'")
-    text = text.replace('©', "c")
-    text = text.replace('°', "'")
-    text = text.replace('£', "E")
-    text = text.replace('§', "S")
+    text = text.replace("_", "-")
+    text = text.replace("`", "'")
+    text = text.replace("©", "c")
+    text = text.replace("°", "'")
+    text = text.replace("£", "E")
+    text = text.replace("§", "S")
 
-    index = text.find('€')
+    index = text.find("€")
     if index >= 0:
-        text = text.replace('€', '<eur>')
+        text = text.replace("€", "<eur>")
     un_unicode = unidecode(text)
     if index >= 0:
-        un_unicode = un_unicode.replace('<eur>', '€')
+        un_unicode = un_unicode.replace("<eur>", "€")
     return un_unicode
 
 
@@ -96,7 +102,9 @@ def compare_labels(preds, labels):
         if preds[i] == labels[i]:
             correct_count += 1
         distance = Levenshtein.distance(labels[i], preds[i])
-        total_cer += distance/max(1, len(labels[i])) # Handle cases where labels[i] is empty
+        total_cer += distance / max(
+            1, len(labels[i])
+        )  # Handle cases where labels[i] is empty
     return correct_count, total_cer
 
 
@@ -107,9 +115,9 @@ def set_bn_eval(module):
 
 def padder(crop, h, w):
     _, c_h, c_w = crop.shape
-    pad_left = (w - c_w)//2
+    pad_left = (w - c_w) // 2
     pad_right = w - pad_left - c_w
-    pad_top = (h - c_h)//2
+    pad_top = (h - c_h) // 2
     pad_bottom = h - pad_top - c_h
     pad = torch.nn.ConstantPad2d((pad_left, pad_right, pad_top, pad_bottom), 1)
     return pad(crop)
@@ -119,11 +127,11 @@ def get_text_stack(image, labels, input_size):
     text_crops = []
     labels_out = []
     for lbl in labels:
-        label = lbl['label']
-        x_min = lbl['x_min']
-        y_min = lbl['y_min']
-        x_max = lbl['x_max']
-        y_max = lbl['y_max']
+        label = lbl["label"]
+        x_min = lbl["x_min"]
+        y_min = lbl["y_min"]
+        x_max = lbl["x_max"]
+        y_max = lbl["y_max"]
         text_crop = image[:, y_min:y_max, x_min:x_max]
         text_crop = padder(text_crop, *input_size)
         labels_out.append(label)
@@ -168,7 +176,6 @@ def get_noisy_image(image, std=0.05, mean=0):
 
 
 def get_ocr_helper(ocr, is_eval=False):
-
     if ocr == "Tesseract":
         return tess_helper.TessHelper(is_eval=is_eval)
     elif ocr == "EasyOCR":
@@ -180,7 +187,7 @@ def get_ocr_helper(ocr, is_eval=False):
 
 
 def random_subset(images, labels, num_samples):
-    """Get 
+    """Get
 
     Args:
         images (torch.tensor): Input images
@@ -188,8 +195,8 @@ def random_subset(images, labels, num_samples):
         subset (int): Number of random samples.
 
     Returns:
-        tuple: Return subset of images and labels. Chosen randomly. 
-    """    
+        tuple: Return subset of images and labels. Chosen randomly.
+    """
     num_images = images.shape[0]
     rand_indices = torch.randperm(num_images)[:num_samples]
     return images[rand_indices], [labels[i] for i in rand_indices], rand_indices
@@ -202,6 +209,15 @@ def create_dirs(dirs):
 
 
 def attention_debug(self, loss_weights, text_crop_names):
+    self.attn_outputs = defaultdict(lambda: [])
+    self.attn_forward_hook1 = (
+        self.attention_model.loss_coef_layer.register_forward_hook(
+            self.get_layer_input("loss_w_layer")
+        )
+    )
+    self.attn_forward_hook2 = self.attention_model.Wq.register_forward_hook(
+        self.get_layer_input("word_embs")
+    )
     print(f"Loss Weights = {loss_weights}")
     print("\nHistory")
     for crop_name in text_crop_names:
@@ -210,6 +226,24 @@ def attention_debug(self, loss_weights, text_crop_names):
     print("\nAttention Scores")
     pprint(self.attn_outputs["loss_w_layer"])
     print("\nLinear Layer Weights")
-    print(self.attention_model.loss_coef_layer.weight, self.attention_model.loss_coef_layer.bias)
+    print(
+        self.attention_model.loss_coef_layer.weight,
+        self.attention_model.loss_coef_layer.bias,
+    )
     print("\n Word Embeddings")
     print(self.attn_outputs["word_embs"])
+    self.attn_forward_hook1.remove()
+    self.attn_forward_hook2.remove()
+
+
+def get_layer_input(self, name):
+    def hook(model, input, output):
+        self.attn_outputs[name].append(input[0].detach())
+    return hook
+
+
+def save_json(metrics, json_path, wandb_obj=None):
+    with open(json_path, "w") as f:
+        json.dump(metrics, f)
+    if wandb_obj is not None:
+        wandb_obj.save(json_path)

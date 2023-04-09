@@ -6,6 +6,7 @@ import os
 import math
 import json
 import random as python_random
+import shutil
 
 from torch.nn import CTCLoss, MSELoss
 import torch.optim as optim
@@ -15,11 +16,11 @@ import torchvision.transforms as transforms
 
 from models.model_crnn import CRNN
 from models.model_unet import UNet
-from models.model_attention import HistoryAttention
-from tracking_utils import call_crnn, generate_ctc_label, weighted_ctc_loss, generate_ctc_target_batches, add_labels_to_history, generate_loss_weights, generate_weights_levenshtein
+from label_tracking import tracking_methods, tracking_utils
+from tracking_utils import generate_ctc_target_batches, call_crnn, weighted_ctc_loss, add_labels_to_history
 from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs, attention_debug
-from utils import get_text_stack, get_ocr_helper, compare_labels
+from utils import get_text_stack, get_ocr_helper, compare_labels, save_json
 from transform_helper import AddGaussianNoice
 import properties as properties
 import numpy as np
@@ -66,8 +67,6 @@ class TrainNNPrep():
         self.validation_set = os.path.join(args.data_base_path, properties.patch_dataset_dev)
         self.start_epoch = args.start_epoch
         self.selection_method = args.minibatch_subset
-        self.window_size = args.tracking_window
-
         self.train_batch_prop = 1
     
         self.char_to_index, self.index_to_char, self.vocab_size = get_char_maps(
@@ -117,13 +116,12 @@ class TrainNNPrep():
         else:
             self.prep_model = torch.load(
                 self.prep_model_path).to(self.device)
-        
-        self.emb_dim = args.emb_dim
-        self.query_dim = args.query_dim
-        self.attn_activation = args.attn_activation
-        
-        self.attention_model = HistoryAttention(len(properties.char_set),self.emb_dim, self.query_dim, self.window_size, self.attn_activation).to(self.device)
-        self.attn_outputs = defaultdict(lambda : [])     
+            
+        self.window_size = args.window_size
+        self.weightgen_method = args.weightgen_method
+               
+        WeightGenCls = tracking_methods.weightgenerator_factory(args.weightgen_method)
+        self.loss_wghts_gnrtr = WeightGenCls(args, self.device, self.char_to_index)
         self.dataset = PatchDataset(
             self.train_set, pad=True, include_name=True, num_subset=self.train_subset_size)
         self.validation_set = PatchDataset(
@@ -131,31 +129,30 @@ class TrainNNPrep():
         self.loader_train = torch.utils.data.DataLoader(
             self.dataset, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=PatchDataset.collate)
 
-
         self.train_set_size = int(len(self.dataset))
         self.val_set_size = len(self.validation_set)
+        
+        if self.cers:
+            self.all_cers = {name: [] for name in self.cers.keys()}
 
         image_proportion = args.image_prop  # Proportion of images to select per epoch
         self.num_subset_images = None
         if image_proportion:
             self.num_subset_images = int(image_proportion * self.train_set_size)
             
-
         self.primary_loss_fn = CTCLoss().to(self.device)
         self.primary_loss_fn_sample_wise = CTCLoss(reduction='none').to(self.device)
 
         self.secondary_loss_fn = MSELoss().to(self.device)
         
-        self.attn_loss_fn = MSELoss().to(self.device)
+        crnn_parameters = list(self.crnn_model.parameters())
+        if args.weightgen_method == "self-attention":
+            crnn_parameters += list(self.loss_wghts_gnrtr.attention_model.parameters())
         self.optimizer_crnn = optim.Adam(
-            list(self.crnn_model.parameters()) + list(self.attention_model.parameters()), lr=self.lr_crnn, weight_decay=self.weight_decay)
+            crnn_parameters, lr=self.lr_crnn, weight_decay=self.weight_decay)
         self.optimizer_prep = optim.Adam(
             self.prep_model.parameters(), lr=self.lr_prep, weight_decay=self.weight_decay)
-        
-    def get_layer_input(self, name):
-        def hook(model, input, output):
-            self.attn_outputs[name].append(input[0].detach())
-        return hook
+
 
     def _call_model(self, images, labels):
         """Get output from CRNN model for images. Convert labels to format suitable for CTC Loss. 
@@ -171,7 +168,7 @@ class TrainNNPrep():
         scores = self.crnn_model(X_var)
         out_size = torch.tensor(
             [scores.shape[0]] * images.shape[0], dtype=torch.int)
-        y_size = torch.tensor([len(l) for l in labels], dtype=torch.int)
+        y_size = torch.tensor([len(lbl) for lbl in labels], dtype=torch.int)
         conc_label = ''.join(labels)
         y = [self.char_to_index[c] for c in conc_label]
         y_var = torch.tensor(y, dtype=torch.int)
@@ -202,15 +199,11 @@ class TrainNNPrep():
         total_crnn_updates = 0
         best_val_acc = 0
         best_val_epoch = 0
-        best_val_ckpt_path = None
-
 
         for epoch in range(self.start_epoch, self.max_epochs):
             if self.selection_method and "global" in self.selection_method:  # Criterion to CHECK if this is a global or local selection method
                 self.sampler.select_samples()
             training_loss = 0.0
-            attn_loss = 0.0
-            loss_weights_mean = 0.0
             epoch_print_flag = True
             epoch_bb_calls = 0
             epoch_crnn_updates = 0
@@ -237,6 +230,7 @@ class TrainNNPrep():
                     pred = self.prep_model(X_var)[0]
                     text_crops_all, labels = get_text_stack(
                         pred, labels_dict, self.input_size)
+                    num_text_strips = text_crops_all.shape[0]
                     folder_name, file_name = name.split("/")[-2:]
                     file_name = file_name.split(".")[0]
                     text_strip_names = list()
@@ -245,8 +239,8 @@ class TrainNNPrep():
                         text_strip_names.append(text_strip_name)
                     # check for number of text crops to be greater than 2, otherwise call black-box for all crops, the 
                     # greater-than-2 condition is ignored if global sampling is performed
-                    if self.selection_method and epoch >= self.warmup_epochs and ("global" not in self.selection_method): # Remove num_strips > 2 condition
-                        num_bb_samples = max(1, math.ceil(text_crops_all.shape[0]*(1 - self.train_batch_prop)))
+                    if self.selection_method and epoch >= self.warmup_epochs and ("global" not in self.selection_method):  # Remove num_strips > 2 condition
+                        num_bb_samples = max(1, math.ceil(num_text_strips*(1 - self.train_batch_prop)))
                         text_crops, labels_gt, bb_sample_indices = self.sampler.query(text_crops_all, labels, num_bb_samples, text_strip_names)
                         bb_sample_indices = bb_sample_indices[:text_crops.shape[0]]
 
@@ -254,48 +248,33 @@ class TrainNNPrep():
                         text_crop_names = [text_strip_names[index] for index in bb_sample_indices]
                         # Log selected samples                     
                         for name in text_crop_names:
-                            if name in self.selected_samples: # Find out why this condition is required
+                            if name in self.selected_samples:  # Find out why this condition is required
                                 self.selected_samples[name][epoch] = True
 
-                        skipped_mask = torch.ones(text_crops_all.shape[0], dtype=bool)
+                        skipped_mask = torch.ones(num_text_strips, dtype=bool)
                         skipped_mask[bb_sample_indices] = False
                         skipped_text_crops = text_crops_all[skipped_mask]
                         labels_skipped = [labels[i] for i in range(skipped_mask.shape[0]) if skipped_mask[i]]      
                     else:
                         text_crops = text_crops_all.detach().cpu()
                         text_crop_names = text_strip_names
-                        skipped_mask = torch.zeros(text_crops_all.shape[0], dtype=bool)
+                        skipped_mask = torch.zeros(num_text_strips, dtype=bool)
                     
                     crnn_approx_loss = 0
                     if epoch_print_flag:
-                        print(f"Total Samples - {text_crops_all.shape[0]}")
+                        print(f"Total Samples - {num_text_strips}")
                         print(f"OCR Samples - {text_crops.shape[0]}")
                     if text_crops.shape[0] > 0 and not (self.selection_method and int(self.train_batch_prop) == 1):  # Cases when the black-box should not be called at all (in a mini-batch)
                         for i in range(self.inner_limit):
                             self.prep_model.zero_grad()
-                            if i == 0 and self.inner_limit_skip:  # Skip adding noise to one of the inner loops
-                                self.attn_outputs = defaultdict(lambda: [])
-                                self.attn_forward_hook1 = self.attention_model.loss_coef_layer.register_forward_hook(self.get_layer_input('loss_w_layer'))
-                                self.attn_forward_hook2 = self.attention_model.Wq.register_forward_hook(self.get_layer_input('word_embs'))
+                            if i == 0 and self.inner_limit_skip:  # Skip adding noise to one of the inner loops to perform label tracking
                                 ocr_labels = self.ocr.get_labels(text_crops)
-                                # loss_weights, modified_weights_list = generate_loss_weights(self, text_crop_names)
-                                loss_weights, modified_weights_list = generate_weights_levenshtein(self, text_crop_names)
-                                add_labels_to_history(self, text_crop_names, ocr_labels) 
-                                if epoch_print_flag:
-                                    attention_debug(self, loss_weights)
-                                    
-                                self.attn_forward_hook1.remove()
-                                self.attn_forward_hook2.remove()
-
+                                loss_weights = self.loss_wghts_gnrtr.gen_weights(self.tracked_labels, text_crop_names)
+                                add_labels_to_history(self, text_crop_names, ocr_labels)
                                 # Peek at history of OCR labels for each strip and construct weighted CTC loss
                                 target_batches = generate_ctc_target_batches(self, text_crop_names)
                                 scores, pred_size = call_crnn(self, text_crops)
-                                if modified_weights_list.shape[0] > 0:  # Calculate attention penalty/loss weights mean only if attention model has been used. 
-                                    loss_weights_mean += modified_weights_list.mean().item()
-                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
-                                    
-                                total_train_bb_calls += len(ocr_labels)
-                                epoch_bb_calls += len(ocr_labels)
+                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)         
                             else:
                                 noisy_imgs = self.add_noise(text_crops, noiser)
                                 ocr_labels = self.ocr.get_labels(noisy_imgs)
@@ -303,8 +282,9 @@ class TrainNNPrep():
                                     noisy_imgs, ocr_labels)
                                 loss = self.primary_loss_fn(
                                     scores, y, pred_size, y_size)
-                                total_train_bb_calls += text_crops.shape[0]
-                                epoch_bb_calls += text_crops.shape[0]
+
+                            total_train_bb_calls += text_crops.shape[0]
+                            epoch_bb_calls += text_crops.shape[0]
                            
                             if self.inner_limit:
                                 crnn_approx_loss += loss.item()
@@ -361,29 +341,15 @@ class TrainNNPrep():
                     self.optimizer_crnn.step()
                 self.optimizer_prep.step()
             
-            if self.selection_method:                               
-                with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
-                    json.dump(self.tracked_labels, f) 
-
-                with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
-                    json.dump(self.tracked_labels, f)
-                    
-                with open(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), 'w') as f:
-                    json.dump(self.selected_samples, f)
-
-                with open(os.path.join(self.selectedsamples_path, f"selected_samples_{epoch}.json"), 'w') as f:
-                    json.dump(self.selected_samples, f)
-                    
-                with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
-                    json.dump(self.sampler.cers, f)
+            if self.selection_method:                            
+                save_json(self.tracked_labels, os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"))
+                save_json(self.tracked_labels, os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), wandb_obj=wandb)
+                save_json(self.selected_samples, os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), wandb_obj=wandb)
+                save_json(self.sampler.all_cers, os.path.join(self.cers_base_path, f"all_cers.json"), wandb_obj=wandb)
                 
-                wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
-                wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
             print(f"Epoch BB calls - {epoch_bb_calls}")
-            train_loss =  training_loss / self.train_set_size
+            train_loss = training_loss / self.train_set_size
             crnn_train_loss = CRNN_training_loss / max(1, epoch_bb_calls)
-            final_attn_loss = attn_loss / self.train_set_size
-            loss_weights_mean = loss_weights_mean / self.train_set_size
 
             self.prep_model.eval()
             self.crnn_model.eval()
@@ -440,8 +406,8 @@ class TrainNNPrep():
                     "Total Black-Box Calls": total_train_bb_calls, "Black-Box Calls":  epoch_bb_calls,
                     "Train + Val BB Calls": train_val_bb_calls, "Total Train + Val BB Calls": total_train_val_bb_calls,
                     "Total CRNN Updates": total_crnn_updates, "CRNN Updates": epoch_crnn_updates,
-                    "CRNN_loss": crnn_train_loss, "Attention_loss": final_attn_loss, "Loss Weights Mean": loss_weights_mean, 
-                    "CRNN_OCR_Matching_ACC": CRNN_OCR_matching_acc, "CRNN_OCR_Matching_CER": CRNN_OCR_matching_cer})
+                    "CRNN_loss": crnn_train_loss, "CRNN_OCR_Matching_ACC": CRNN_OCR_matching_acc, 
+                    "CRNN_OCR_Matching_CER": CRNN_OCR_matching_cer})
 
             img = transforms.ToPILImage()(img_out.cpu()[0])
             img.save(os.path.join(self.img_out_path, 'out_'+str(epoch)+'.png'), 'PNG')
@@ -459,17 +425,20 @@ class TrainNNPrep():
             torch.save(self.prep_model, prep_ckpt_path)
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
-            
+            best_prep_ckpt_path = os.path.join(self.ckpt_base_path, f"Prep_model_best")
             if OCR_accuracy > best_val_acc:
                 best_val_acc = OCR_accuracy
-                best_val_ckpt_path = prep_ckpt_path
                 best_val_epoch = epoch
+                # torch.save(self.prep_model, best_prep_ckpt_path) # Ideally, copy previously saved model using shutil
+                shutil.copyfile(prep_ckpt_path, best_prep_ckpt_path)
+                wandb.save(best_prep_ckpt_path)
+                summary_metrics = dict()
+                summary_metrics["best_val_acc"] = best_val_acc
+                summary_metrics["best_val_epoch"] = best_val_epoch
+                wandb.run.summary.update(summary_metrics)
+                
         # To be removed: Do not report test-set performance
         # summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
-        summary_metrics = dict()
-        summary_metrics["best_val_acc"] = best_val_acc
-        summary_metrics["best_val_epoch"] = best_val_epoch
-        wandb.run.summary.update(summary_metrics)
         print("Training Completed.")
         
 
@@ -478,6 +447,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description='Trains the Prep with Patch dataset')
+    tracking_parser = argparse.ArgumentParser(
+        description='Specific arguments for all tracking methods')
     parser.add_argument('--lr_crnn', type=float, default=0.0001,
                         help='CRNN learning rate, not used by adadealta')
     parser.add_argument('--scalar', type=float, default=1,
@@ -528,15 +499,20 @@ if __name__ == "__main__":
                             help="Cer information json")
     parser.add_argument('--image_prop', help="Percentage of images per epoch", type=float)
     parser.add_argument('--discount_factor', help="Discount factor for CER values", type=float, default=1)
-    parser.add_argument('--tracking_window', help='Window Size if tracking is enabled', type=int, default=1)
-    parser.add_argument('--query_dim', help='Dimension of query vector in self attention ', type=int, default=32)
-    parser.add_argument('--emb_dim', help='Word Embedding size', type=int, default=256)
-    parser.add_argument('--attn_activation', help='Activation function after last layer of self attention module', type=str, default='sigmoid', choices=['sigmoid', 'softmax', 'relu'])
     parser.add_argument('--update_CRNN', action='store_true', help='Update CRNN when updating preprocessor. Only relevant IF THE OCR IS NEVER CALLED.')
+
+    parser.add_argument('--window_size', help='Window Size if tracking is enabled', type=int, default=1)
+    parser.add_argument('--query_dim', help='Dimension of query vector in self attention ', type=int, default=32)
+    parser.add_argument('--emb_dim', help='Word Embedding size in self-attention', type=int, default=256)
+    parser.add_argument('--attn_activation', help='Activation function after last layer of self attention module', type=str, default='sigmoid', choices=['sigmoid', 'softmax', 'relu'])
+    parser.add_argument('--weightgen_method', help="Method for generating loss weights for tracking", default='decaying', choices=['levenshtein', 'self_attention', 'decaying'])
+    parser.add_argument('--decay_factor', help="Decay factor for decaying loss weight generation", type=float, default=0.7)
 
 
     args = parser.parse_args()
+    print("Training Arguments")
     print(args)
+
     wandb.init(project='ocr-calls-reduction', entity='tataganesh')
     wandb.config.update(vars(args))
     wandb.run.name = f"{args.exp_name}"

@@ -155,7 +155,7 @@ class TrainCRNN:
             self.model.train()
             step = 0
             training_loss = 0
-            for images, labels, names in self.loader_train:
+            for images, labels in self.loader_train:
                 self.model.zero_grad()
                 scores, y, pred_size, y_size = self._call_model(images, labels)
                 loss = self.loss_function(scores, y, pred_size, y_size)
