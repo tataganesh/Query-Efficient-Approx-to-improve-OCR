@@ -55,50 +55,14 @@ class TrainCRNN():
             "cuda:0" if torch.cuda.is_available() else "cpu")
 
         self.ocr = get_ocr_helper(self.ocr)
-
-        # transform = transforms.Compose([
-        #     PadWhite(self.input_size),
-        #     transforms.ToTensor(),
-        # ])
-        # dataset_ocr = OCRDataset(
-        #     self.train_set, transform=transform, ocr_helper=self.ocr, include_name=True)
-                
-        # dataset_gt = ImgDataset(
-        #     self.train_set, transform=transform, include_name=True)
-        # self.loader_ocr = torch.utils.data.DataLoader(
-        #     dataset_ocr, batch_size=self.batch_size)
-        # self.loader_gt = torch.utils.data.DataLoader(
-        #     dataset_gt, batch_size=self.batch_size)
         self.train_set = PatchDataset(
             self.train_set, pad=True, include_name=True)
         self.validation_set = PatchDataset(
             self.validation_set, pad=True)
         self.loader_train = torch.utils.data.DataLoader(
-            self.train_set, batch_size=32, shuffle=True, drop_last=True, collate_fn=PatchDataset.collate)
+            self.train_set, batch_size=64, shuffle=True, drop_last=False, collate_fn=PatchDataset.collate)
 
     def inference(self):
-        # writer = SummaryWriter(self.tb_log_path)
-
-        # print(f"Train batch size is {self.train_batch_size}")
-        iters = 0
-        count = 0
-        # for _, gt_labels, gt_names in self.loader_gt:
-        #     count += len(gt_labels)
-        # for ocr_details, gt_details in zip(self.loader_ocr, self.loader_gt):
-        #     ocr_images, ocr_labels, ocr_names = ocr_details
-        #     _, gt_labels, gt_names = gt_details
-        #     for i in range(len(ocr_labels)):
-        #         try:
-        #             _, o_cer = compare_labels([ocr_labels[i]], [gt_labels[i]])
-        #         except Exception:
-        #             traceback.print_exc() 
-        #             print(ocr_labels[i], gt_labels[i], gt_names[i])
-        #             exit()
-        #         self.text_strip_cer[gt_names[i]] = o_cer
-        #     iters += 1
-        #     if iters % 100 == 0:
-        #         print(iters)
-        #     count += len(ocr_labels)
         for images, labels_dicts, names in tqdm(self.loader_train):
             for i in range(len(labels_dicts)):
                 image = images[i]
@@ -117,8 +81,6 @@ class TrainCRNN():
                     text_strip_name = f"{j}_{labels[j]}_{folder_name}_{file_name}"
                     self.text_strip_cer[text_strip_name] = o_cer
 
-                
-
         with open(self.cer_json_path, 'w') as f:
             json.dump(self.text_strip_cer, f)
         
@@ -128,8 +90,7 @@ if __name__ == "__main__":
         description='Trains the CRNN model')
     parser.add_argument('--batch_size', type=int,
                         default=32, help='input batch size')
-    parser.add_argument('--data_base_path',
-                        default=32, help='input batch size')
+    parser.add_argument('--data_base_path', help='input batch size')
     parser.add_argument('--random_seed', type=int,
                         default=42, help='random seed for shuffles')
     parser.add_argument('--ocr', default="Tesseract", 

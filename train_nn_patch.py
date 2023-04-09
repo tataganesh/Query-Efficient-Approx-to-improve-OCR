@@ -20,7 +20,7 @@ from label_tracking import tracking_methods, tracking_utils
 from tracking_utils import generate_ctc_target_batches, call_crnn, weighted_ctc_loss, add_labels_to_history
 from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs, attention_debug
-from utils import get_text_stack, get_ocr_helper, compare_labels
+from utils import get_text_stack, get_ocr_helper, compare_labels, save_json
 from transform_helper import AddGaussianNoice
 import properties as properties
 import numpy as np
@@ -131,6 +131,9 @@ class TrainNNPrep():
 
         self.train_set_size = int(len(self.dataset))
         self.val_set_size = len(self.validation_set)
+        
+        if self.cers:
+            self.all_cers = {name: [] for name in self.cers.keys()}
 
         image_proportion = args.image_prop  # Proportion of images to select per epoch
         self.num_subset_images = None
@@ -271,7 +274,7 @@ class TrainNNPrep():
                                 # Peek at history of OCR labels for each strip and construct weighted CTC loss
                                 target_batches = generate_ctc_target_batches(self, text_crop_names)
                                 scores, pred_size = call_crnn(self, text_crops)
-                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)             
+                                loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)         
                             else:
                                 noisy_imgs = self.add_noise(text_crops, noiser)
                                 ocr_labels = self.ocr.get_labels(noisy_imgs)
@@ -338,26 +341,14 @@ class TrainNNPrep():
                     self.optimizer_crnn.step()
                 self.optimizer_prep.step()
             
-            if self.selection_method:                               
-                with open(os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"), 'w') as f:
-                    json.dump(self.tracked_labels, f) 
-
-                with open(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), 'w') as f:
-                    json.dump(self.tracked_labels, f)
-                    
-                with open(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), 'w') as f:
-                    json.dump(self.selected_samples, f)
-
-                with open(os.path.join(self.selectedsamples_path, f"selected_samples_{epoch}.json"), 'w') as f:
-                    json.dump(self.selected_samples, f)
-                    
-                with open(os.path.join(self.cers_base_path, f"cers_{epoch}.json"), 'w') as f:
-                    json.dump(self.sampler.cers, f)
+            if self.selection_method:                            
+                save_json(self.tracked_labels, os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"))
+                save_json(self.tracked_labels, os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"), wandb_obj=wandb)
+                save_json(self.selected_samples, os.path.join(self.selectedsamples_path, f"selected_samples_current.json"), wandb_obj=wandb)
+                save_json(self.sampler.all_cers, os.path.join(self.cers_base_path, f"all_cers.json"), wandb_obj=wandb)
                 
-                wandb.save(os.path.join(self.tracked_labels_path, f"tracked_labels_current.json"))
-                wandb.save(os.path.join(self.selectedsamples_path, f"selected_samples_current.json"))
             print(f"Epoch BB calls - {epoch_bb_calls}")
-            train_loss =  training_loss / self.train_set_size
+            train_loss = training_loss / self.train_set_size
             crnn_train_loss = CRNN_training_loss / max(1, epoch_bb_calls)
 
             self.prep_model.eval()
@@ -441,13 +432,13 @@ class TrainNNPrep():
                 # torch.save(self.prep_model, best_prep_ckpt_path) # Ideally, copy previously saved model using shutil
                 shutil.copyfile(prep_ckpt_path, best_prep_ckpt_path)
                 wandb.save(best_prep_ckpt_path)
+                summary_metrics = dict()
+                summary_metrics["best_val_acc"] = best_val_acc
+                summary_metrics["best_val_epoch"] = best_val_epoch
+                wandb.run.summary.update(summary_metrics)
                 
         # To be removed: Do not report test-set performance
         # summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
-        summary_metrics = dict()
-        summary_metrics["best_val_acc"] = best_val_acc
-        summary_metrics["best_val_epoch"] = best_val_epoch
-        wandb.run.summary.update(summary_metrics)
         print("Training Completed.")
         
 

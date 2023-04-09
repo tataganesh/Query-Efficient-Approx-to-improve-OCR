@@ -2,11 +2,11 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=3  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=3000M       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=8:00:00     # DD-HH:MM:SS
+#SBATCH --time=10:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/%j.out
 #SBATCH --array=1-4
 
-EXP_NUM=$((443+${SLURM_ARRAY_TASK_ID}))
+EXP_NUM=$((449+${SLURM_ARRAY_TASK_ID}))
 echo "Running Experiment $EXP_NUM"
 
 module load StdEnv/2020 tesseract/4.1.0
@@ -52,9 +52,9 @@ BATCH_SIZE=1
 EPOCH=50
 EXP_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/"
 CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
-PREP_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_249/ckpts/Prep_model_44"
+# PREP_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_249/ckpts/Prep_model_44"
 CER_JSON_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/pos_dataset_cers.json"
-CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_442/crnn_warmup/crnn_model_199_79.44"
+# CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_442/crnn_warmup/crnn_model_199_79.44"
 
 command=$(sed -n "${SLURM_ARRAY_TASK_ID}p" job_array)
 eval "$command"
