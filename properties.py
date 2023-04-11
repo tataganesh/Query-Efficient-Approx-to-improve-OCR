@@ -14,6 +14,13 @@ patch_dataset_test = "data/patch_dataset_test"
 patch_dataset_dev = "data/patch_dataset_dev"
 
 
+# WildReceipt Patches
+wr_dataset_train = "data/wildreceipt_train"
+wr_dataset_test = "data/wildreceipt_test"
+wr_dataset_dev = "data/wildreceipt_dev"
+
+
+
 prep_crnn_ckpts = "ckpts"
 crnn_model_path = "./outputs/crnn_trained_model/model"
 crnn_tensor_board = "./outputs/crnn_runs/"
@@ -32,4 +39,5 @@ char_set = ['`', ' ', '!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ','
 # tesseract_path = "/usr/share/tesseract-ocr/4.00/tessdata" # Original
 tesseract_path = "" # For Google Colab
 empty_char = ' '
-max_char_len = 25
+max_char_len = 100
+# max_char_len = 25

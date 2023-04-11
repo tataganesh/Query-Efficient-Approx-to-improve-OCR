@@ -9,6 +9,7 @@ from datasets import img_dataset
 from utils import show_img, compare_labels, get_text_stack, get_ocr_helper
 from transform_helper import PadWhite
 import properties as properties
+from tqdm import tqdm
 
 
 class EvalPrep():
@@ -28,15 +29,20 @@ class EvalPrep():
         elif self.dataset_name == 'pos':
             self.test_set = os.path.join(args.data_base_path, properties.patch_dataset_test)
             self.input_size = properties.input_size
+        elif self.dataset_name == "wildreceipt":
+            self.test_set = os.path.join(args.data_base_path, properties.wr_dataset_test)
+            self.input_size = properties.input_size
 
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu")
-        self.prep_model = torch.load(self.prep_model_path).to(self.device)
+        self.prep_model = torch.load(self.prep_model_path, map_location=self.device).to(self.device)
 
         self.ocr = get_ocr_helper(self.ocr_name, is_eval=True)
 
         if self.dataset_name == 'pos':
-            self.dataset = patch_dataset.PatchDataset(self.test_set, pad=True)
+            self.dataset = patch_dataset.PatchDataset(self.test_set, pad=True, include_name=True)
+        elif self.dataset_name == 'wildreceipt':
+            self.dataset = patch_dataset.PatchDataset(self.test_set, pad=True, include_name=True, resize_images=False)
         else:
             transform = transforms.Compose([
                 PadWhite(self.input_size),
@@ -44,8 +50,8 @@ class EvalPrep():
             ])
             self.dataset = img_dataset.ImgDataset(
                 self.test_set, transform=transform, include_name=True)
-            self.loader_eval = torch.utils.data.DataLoader(
-                self.dataset, batch_size=self.batch_size, num_workers=properties.num_workers)
+        self.loader_eval = torch.utils.data.DataLoader(
+            self.dataset, batch_size=self.batch_size, num_workers=properties.num_workers)
 
     def _print_labels(self, labels, pred, ori):
         print()
@@ -111,12 +117,14 @@ class EvalPrep():
         lbl_count = 0
         counter = 0
 
-        for i, (image, labels_dict) in enumerate(self.dataset):
+        for i, (image, labels_dict, names) in enumerate(self.dataset):
             text_crops, labels = get_text_stack(
-                image.detach(), labels_dict, self.input_size)
+                image.detach(), labels_dict, self.input_size)     
             lbl_count += len(labels)
             if self.show_orig:
                 ocr_labels = self.ocr.get_labels(text_crops)
+                if self.dataset_name == 'wildreceipt':
+                    ocr_labels = [ocr_lbl.replace(" ", "") for ocr_lbl in ocr_labels]
 
                 ori_crt_count, ori_cer = compare_labels(
                     ocr_labels, labels)
@@ -133,11 +141,18 @@ class EvalPrep():
             pred_crops, labels = get_text_stack(
                 pred, labels_dict, self.input_size)
             pred_labels = self.ocr.get_labels(pred_crops)
+            if self.dataset_name == 'wildreceipt':
+                pred_labels = [pred_lbl.replace(" ", "") for pred_lbl in pred_labels]
             prd_crt_count, prd_cer = compare_labels(
                 pred_labels, labels)
             prd_lbl_crt_count += prd_crt_count
             prd_lbl_cer += prd_cer
-
+        
+            # print(names, prd_crt_count)
+            # for pred_lbl, lbl in zip(pred_labels, labels):
+            #     print(lbl, pred_lbl)
+            
+            # print("----------------------------------------------------")
             prd_cer = round(prd_cer/len(labels), 2)
 
             if self.show_img:
@@ -161,7 +176,7 @@ class EvalPrep():
         return prd_lbl_crt_count/lbl_count, prd_lbl_cer/lbl_count
 
     def eval(self):
-        if self.dataset_name == 'pos':
+        if self.dataset_name in ('pos', 'wildreceipt'):
             return self.eval_patch()
         else:
             return self.eval_area()
@@ -177,7 +192,7 @@ if __name__ == "__main__":
     parser.add_argument('--prep_path', default=properties.prep_model_path,
                         help="specify non-default prep model location")
     parser.add_argument('--dataset', default='pos',
-                        help="performs training with given dataset [pos, vgg]")
+                        help="performs training with given dataset [pos, vgg, wildreceipt]")
     parser.add_argument('--ocr', default="Tesseract",
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument("--batch_size", default=64, type=int,  help='Inference batch size')

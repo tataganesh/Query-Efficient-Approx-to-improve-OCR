@@ -2,17 +2,17 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=3  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=3000M       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=10:00:00     # DD-HH:MM:SS
+#SBATCH --time=16:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/%j.out
 #SBATCH --array=1-4
 
-EXP_NUM=$((449+${SLURM_ARRAY_TASK_ID}))
+EXP_NUM=$((453+${SLURM_ARRAY_TASK_ID}))
 echo "Running Experiment $EXP_NUM"
 
 module load StdEnv/2020 tesseract/4.1.0
 
-# source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
-source /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/ocr_calls_new/bin/activate
+source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
+# source /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/ocr_calls_new/bin/activate
 
 # Wandb Commands
 # wandb enabled
@@ -37,14 +37,14 @@ else
     echo "$DATASET_NAME Dataset exists"
 fi
 
-OCR="Tesseract"
-# OCR="EasyOCR"
+# OCR="Tesseract"
+OCR="EasyOCR"
 
 if [ $OCR == "Tesseract" ]
 then
     CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_17/crnn_warmup/crnn_model_49"
 else
-    CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_260/crnn_warmup/crnn_model_32"
+    CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_260/crnn_warmup/crnn_model_32"
 fi
 
 cd $PROJECT_HOME || { echo "$PROJECT_HOME doesn't exist"; exit 1; }
