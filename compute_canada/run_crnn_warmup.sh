@@ -9,9 +9,25 @@ EXP_NUM=454
 date +%c
 echo "Running Experiment $EXP_NUM"
 module load StdEnv/2020 tesseract/4.1.0
-# source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
-source /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/ocr_calls_new/bin/activate
-cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
+
+# OCR="Tesseract"
+OCR="EasyOCR"
+#OCR="gvision"
+
+if [ $OCR == "gvision" ]; then
+    VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/ocr_calls_new/bin/activate"
+elif [ $OCR == "EasyOCR" ] || [ $OCR == "Tesseract" ]; then
+    VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate"
+else 
+    echo "$OCR is not a valid ocr option. Exiting.."
+    exit
+fi
+source "$VENV_PATH"
+
+
+PROJECT_HOME="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR"
+
+cd $PROJECT_HOME
 DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="textarea_dataset"
 DATASET_PATH="/home/ganesh/projects/def-nilanjan/ganesh/datasets/$DATASET_NAME.zip"
@@ -30,7 +46,7 @@ else
 	echo "Dataset exists"
 fi
 
-cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
+cd $PROJECT_HOME
 BATCH_SIZE=64
 EPOCH=50
 CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/crnn_warmup/crnn_model"
@@ -39,7 +55,7 @@ CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/crnn_warmup/crnn_model
 mkdir -p $CRNN_MODEL_PATH
 # tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
 echo "Running training script"
-python -u train_crnn.py --batch_size $BATCH_SIZE --epoch $EPOCH --crnn_model_path $CRNN_MODEL_PATH --dataset pos --data_base_path $SLURM_TMPDIR --ocr EasyOCR # --lr 5e-05 # --ckpt_path $CKPT_PATH  --train_subset 100 --val_subset 100
+python -u train_crnn.py --batch_size $BATCH_SIZE --epoch $EPOCH --crnn_model_path $CRNN_MODEL_PATH --dataset pos --data_base_path $SLURM_TMPDIR --ocr $OCR # --lr 5e-05 # --ckpt_path $CKPT_PATH  --train_subset 100 --val_subset 100
 #--minibatch_subset random 
 # --ckpt_path $CKPT_PATH --start_epoch 6
 date +%c

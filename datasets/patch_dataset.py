@@ -13,14 +13,15 @@ import properties as properties
 
 class PatchDataset(Dataset):
 
-    def __init__(self, data_dir, pad=False, include_name=False, num_subset=None):
+    def __init__(self, data_dir, pad=False, include_name=False, num_subset=None, resize_images=False):
         self.pad = pad
         self.include_name = include_name
-        self.files = get_files(data_dir, ['png', 'jpg'])
+        self.files = get_files(data_dir, ['png', 'jpg', 'jpeg'])
         if num_subset:
             random.seed(42)  # Allows reproducibility of train/val subsets
             self.files = random.sample(self.files, num_subset)
         self.size = (400, 512)
+        self.resize_images = resize_images
 
     def __len__(self):
         return len(self.files)
@@ -30,6 +31,7 @@ class PatchDataset(Dataset):
         image = Image.open(img_name).convert("L")
         w, h = image.size
         top_padding, left_padding = 0, 0
+        resize_w, resize_h = 1, 1
         if self.pad:
 
             if h <= self.size[0] or w <= self.size[1]:
@@ -44,18 +46,24 @@ class PatchDataset(Dataset):
                 top_padding = pad_height
                 left_padding = pad_width
             elif h > 400 or w > 500:
-                print("Height screwed", idx)
+                if self.resize_images:
+                    image = transforms.Resize(self.size)(image)
+                    resize_h = self.size[0]/h
+                    resize_w = self.size[1]/w
+                else:
+                    print("Height screwed", idx)
 
         image = transforms.ToTensor()(image)
-        label = self.coord_loader(img_name, top_padding, left_padding)
+        
+        label = self.coord_loader(img_name, top_padding, left_padding, resize_w, resize_h)
         if self.include_name:
             sample = (image, label, img_name)
         else:
             sample = (image, label)
         return sample
 
-    def coord_loader(self, img_path, top_padding=0, left_padding=0):
-        f = open(img_path[:-3] + "json", 'r')
+    def coord_loader(self, img_path, top_padding=0, left_padding=0, resize_w=1, resize_h=1):
+        f = open(img_path.rsplit(".", 1)[0] + ".json", 'r')
         label_list = json.loads(f.read())
         # print(label_list)
         f.close()
@@ -72,10 +80,10 @@ class PatchDataset(Dataset):
                 x3 = text_area['x3'] + left_padding
                 x4 = text_area['x4'] + left_padding
 
-                x_min = min([x1, x2, x3, x4])
-                y_min = min([y1, y2, y3, y4])
-                x_max = max([x1, x2, x3, x4])
-                y_max = max([y1, y2, y3, y4])
+                x_min = int(min([x1, x2, x3, x4]) * resize_w)
+                y_min = int(min([y1, y2, y3, y4]) * resize_h)
+                x_max = int(max([x1, x2, x3, x4]) * resize_w)
+                y_max = int(max([y1, y2, y3, y4]) * resize_h)
             else:
                 x_min = text_area['x_min'] + left_padding
                 y_min = text_area['y_min'] + top_padding

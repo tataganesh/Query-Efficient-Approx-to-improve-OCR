@@ -11,10 +11,19 @@ echo "Running Experiment $EXP_NUM"
 # module load gcc/9.3.0 opencv
 module load StdEnv/2020 tesseract/4.1.0
 
+# OCR="Tesseract"
+OCR="EasyOCR"
+#OCR="gvision"
 
 PROJECT_HOME="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR"
-VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/ocr_calls_new/bin/activate"
-# VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate"
+if [ $OCR == "gvision" ]; then
+    VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/ocr_calls_new/bin/activate"
+elif [ $OCR == "EasyOCR" ] || [ $OCR == "Tesseract" ]; then
+    VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate"
+else 
+    echo "$OCR is not a valid ocr option. Exiting.."
+    exit
+fi
 source "$VENV_PATH"
 
 wandb offline
@@ -42,8 +51,6 @@ EPOCH=10
 EXP_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/"
 # CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_431/crnn_warmup/crnn_model_49"
 CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_17/crnn_warmup/crnn_model_49"
-# CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_448/crnn_warmup/crnn_model_199_92.71"
-# CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_433/ckpts/CRNN_model_2"
 CKPT_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts"
 # PREP_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_249/ckpts/Prep_model_44"
 CER_JSON_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/pos_dataset_cers.json"
