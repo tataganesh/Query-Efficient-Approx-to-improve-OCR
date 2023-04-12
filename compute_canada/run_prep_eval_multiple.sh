@@ -48,36 +48,30 @@ local exps=("$@")
 for i in "${exps[@]}";
 do
     echo "Preprocessor $i"
-    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR --ocr Tesseract
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/Prep_model_$i" --dataset pos --data_base_path $SLURM_TMPDIR --ocr Tesseract
 done
 
 }
 
 
 
-exps=(49)
-run_exp 122 "${exps[@]}" 
+exps=(45_83.58)
+run_exp 450 "${exps[@]}" 
 
-exps=(48)
-run_exp 394 "${exps[@]}" # both
+exps=(44_80.02)
+run_exp 451 "${exps[@]}" # both
 
-exps=(49)
-run_exp 390 "${exps[@]}" # 49
+exps=(47_82.75)
+run_exp 452 "${exps[@]}" # 49
 
-exps=(43)
-run_exp 392 "${exps[@]}" #  48
+exps=(48_79.60)
+run_exp 453 "${exps[@]}" #  48
 
-exps=(46)
-run_exp 395 "${exps[@]}" #  42
+exps=(49_84.13)
+run_exp 458 "${exps[@]}" #  47
 
-exps=(49)
-run_exp 391 "${exps[@]}" #  45
-
-# exps=(47)
-# run_exp 378 "${exps[@]}" #  47
-
-# exps=(45)
-# run_exp 381 "${exps[@]}" #  48
+exps=(45_82.63)
+run_exp 459 "${exps[@]}" #  48
 
 # exps=(47)
 # run_exp 376 "${exps[@]}" #  41

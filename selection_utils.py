@@ -170,6 +170,23 @@ class CerRangeSampler(DataSampler):
         return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
 
 
+class TopKCERSampler(DataSampler):
+    def __init__(self, cers, discount_factor=1):
+        self.cers = cers
+        self.discount_factor = discount_factor
+        self.all_cers = dict()
+    
+    def query(self, images, labels, num_samples, names):
+        image_cers = list()
+        for name in names:
+            if name in self.cers:
+                image_cers.append(self.cers[name])
+        image_cers = torch.tensor(image_cers)
+        selection_idx = torch.argsort(image_cers, descending=True)[:num_samples]
+        return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
+
+
+
 class UniformEntropySampler(DataSampler):
     def __init__(self, entropies, cers):
         self.entropies = entropies
@@ -239,6 +256,7 @@ def datasampler_factory(sampling_method):
     method_mapping = {
         "uniformCER": UniformCerSampler,
         "random": RandomSampler,
+        "topKCER": TopKCERSampler,
         "uniformCERglobal": UniformSamplerGlobal,
         "randomglobal": RandomSamplerGlobal,
         "rangeCER": CerRangeSampler,
