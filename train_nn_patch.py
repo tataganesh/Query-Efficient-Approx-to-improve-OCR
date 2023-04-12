@@ -476,7 +476,7 @@ if __name__ == "__main__":
                         help="performs training labels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument('--random_std', action='store_false',
                         help='randomly selected integers from 0 upto given std value (devided by 100) will be used', default=True)
-    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER', 'uniformCERglobal', 'randomglobal', 'rangeCER', 'uniformEntropy'], 
+    parser.add_argument('--minibatch_subset',  choices=['random', 'uniformCER', 'uniformCERglobal', 'randomglobal', 'rangeCER', 'uniformEntropy', 'topKCER'], 
                         help='Specify method to pick subset from minibatch.')
     parser.add_argument('--minibatch_subset_prop', default=0.5, type=float,
                         help='If --minibatch_subset is provided, specify percentage of samples per mini-batch.')
