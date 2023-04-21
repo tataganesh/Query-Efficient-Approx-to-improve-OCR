@@ -5,8 +5,8 @@
 #SBATCH --time=24:00:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/%j.out
 
-EXP_NUM=260
-echo "Running Experiment $EXP_ID"
+EXP_NUM=470
+echo "Running Experiment $EXP_NUM"
 
 module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
@@ -15,7 +15,6 @@ source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
 #wandb offline
 wandb login $WANDB_API_KEY
 
-cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 DATA_PATH="$SLURM_TMPDIR/data"
 if [ ! -d $DATA_PATH ]
 then
@@ -30,7 +29,7 @@ else
 fi
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
 BATCH_SIZE=64
-EPOCH=50
+EPOCH=2
 EXP_BASE_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/"
 CRNN_MODEL_PATH="/home/ganesh/projects/def-nilanjan/ganesh/experiment_artifacts/experiment_8/crnn_warmup/crnn_model_29"
 TB_LOGS_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/tb_logs"
@@ -39,5 +38,5 @@ CER_JSON_PATH="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-impr
 mkdir -p $TB_LOGS_PATH $CKPT_BASE_PATH
 # tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
 echo "Running training script"
-python -u train_nn_area.py --batch_size $BATCH_SIZE --epoch $EPOCH --exp_id $EXP_NUM --exp_base_path $EXP_BASE_PATH --crnn_model  $CRNN_MODEL_PATH --data_base_path $SLURM_TMPDIR --exp_name vgg_no_blackbox --inner_limit 0  --cers_ocr_path $CER_JSON_PATH # --minibatch_subset_prop 0.93 --minibatch_subset rangeCER  # --std 0 #--inner_limit_skip 
+python -u train_nn_area.py --batch_size $BATCH_SIZE --epoch $EPOCH --exp_id $EXP_NUM --exp_base_path $EXP_BASE_PATH --crnn_model  $CRNN_MODEL_PATH --data_base_path $SLURM_TMPDIR --exp_name vgg_test --minibatch_subset rangeCER --minibatch_subset_prop 0.93 --inner_limit 1  --cers_ocr_path $CER_JSON_PATH --train_subset_size 10000 # --val_subset_size 10000 # --minibatch_subset_prop 0.93 --minibatch_subset rangeCER  # --std 0 #--inner_limit_skip 
 # --minibatch_subset_prop 0.5 --label_impute

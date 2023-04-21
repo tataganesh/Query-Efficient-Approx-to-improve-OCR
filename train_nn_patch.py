@@ -246,7 +246,7 @@ class TrainNNPrep():
 
                         text_crops = text_crops.detach().cpu()
                         text_crop_names = [text_strip_names[index] for index in bb_sample_indices]
-                        # Log selected samples                     
+                        # Log selected samples                   
                         for name in text_crop_names:
                             if name in self.selected_samples:  # Find out why this condition is required
                                 self.selected_samples[name][epoch] = True
@@ -429,7 +429,6 @@ class TrainNNPrep():
             if OCR_accuracy > best_val_acc:
                 best_val_acc = OCR_accuracy
                 best_val_epoch = epoch
-                # torch.save(self.prep_model, best_prep_ckpt_path) # Ideally, copy previously saved model using shutil
                 shutil.copyfile(prep_ckpt_path, best_prep_ckpt_path)
                 wandb.save(best_prep_ckpt_path)
                 summary_metrics = dict()

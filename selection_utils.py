@@ -68,7 +68,7 @@ class DataSampler(metaclass=ABCMeta):
         pass
 
     def update_cer(self, batch_cers, names):
-        for name, cer in zip(names,batch_cers):
+        for name, cer in zip(names, batch_cers):
             if name not in self.cers:
                 print(f"Sample not present - {name}")
             self.cers[name] = cer
