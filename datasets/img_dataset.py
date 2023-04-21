@@ -14,7 +14,7 @@ import random
 
 class ImgDataset(Dataset):
 
-    def __init__(self, data_dir, transform=None, include_name=False, include_index=False, num_subset=None):
+    def __init__(self, data_dir, transform=None, include_name=False, include_index=False):
         self.transform = transform
         self.include_name = include_name
         self.include_index = include_index
@@ -23,9 +23,6 @@ class ImgDataset(Dataset):
         for img in unprocessed:
             if len(os.path.basename(img).split('_')[1]) <= properties.max_char_len:
                 self.files.append(img)
-        if num_subset:
-            random.seed(42)  # Allows reproducibility of train/val subsets
-            self.files = random.sample(self.files, num_subset)
 
     def __len__(self):
         return len(self.files)

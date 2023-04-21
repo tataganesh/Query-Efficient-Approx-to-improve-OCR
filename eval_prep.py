@@ -26,7 +26,7 @@ class EvalPrep():
         if self.dataset_name == 'vgg':
             self.test_set = os.path.join(args.data_base_path, properties.vgg_text_dataset_test)
             self.input_size = properties.input_size
-        elif self.dataset_name == 'pos':
+        elif self.dataset_name == 'patch_dataset':
             self.test_set = os.path.join(args.data_base_path, properties.patch_dataset_test)
             self.input_size = properties.input_size
         elif self.dataset_name == "wildreceipt":
@@ -39,7 +39,7 @@ class EvalPrep():
 
         self.ocr = get_ocr_helper(self.ocr_name, is_eval=True)
 
-        if self.dataset_name == 'pos':
+        if self.dataset_name == 'patch_dataset':
             self.dataset = patch_dataset.PatchDataset(self.test_set, pad=True, include_name=True)
         elif self.dataset_name == 'wildreceipt':
             self.dataset = patch_dataset.PatchDataset(self.test_set, pad=True, include_name=True, resize_images=False)
@@ -72,26 +72,25 @@ class EvalPrep():
         self.prep_model.eval()
         pred_correct_count = 0
         ori_correct_count = 0
-        ori_cer = 0
+        ori_cer_final = 0
         pred_cer = 0
         counter = 0
 
         for images, labels, names in self.loader_eval:
             X_var = images.to(self.device)
             img_preds = self.prep_model(X_var)
-
             ocr_lbl_pred = self.ocr.get_labels(img_preds.cpu())
-            # ocr_lbl_ori = self.ocr.get_labels(images.cpu())
-
-            # if self.show_txt:
-            #     self._print_labels(labels, ocr_lbl_pred, ocr_lbl_ori)
-
+            
+            if self.show_orig:
+                ocr_lbl_ori = self.ocr.get_labels(images.cpu())
+                ori_crt_count, ori_cer = compare_labels(ocr_lbl_ori, labels)
+                ori_correct_count += ori_crt_count
+                ori_lbl_cer += ori_cer
+                ori_cer_final = round(ori_lbl_cer/len(labels), 2)
+            
             prd_crt_count, prd_cer = compare_labels(
                 ocr_lbl_pred, labels)
-            # ori_crt_count, o_cer = compare_labels(ocr_lbl_ori, labels)
             pred_correct_count += prd_crt_count
-            # ori_correct_count += ori_crt_count
-            # ori_cer += o_cer
             pred_cer += prd_cer
 
             if self.show_img:
@@ -100,10 +99,11 @@ class EvalPrep():
         print()
         print('Correct count from predicted images: {:d}/{:d} ({:.5f})'.format(
             pred_correct_count, len(self.dataset), pred_correct_count/len(self.dataset)))
-        # print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
-        #     ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
-        # print('Average CER from original images: {:.5f}'.format(
-        #     ori_cer/len(self.dataset)))
+        if self.show_orig:
+            print('Correct count from original images: {:d}/{:d} ({:.5f})'.format(
+                ori_correct_count, len(self.dataset), ori_correct_count/len(self.dataset)))
+            print('Average CER from original images: {:.5f}'.format(
+                ori_cer_final/len(self.dataset)))
         print('Average CER from predicted images: {:.5f}'.format(
             pred_cer/len(self.dataset)))
 
@@ -147,12 +147,6 @@ class EvalPrep():
                 pred_labels, labels)
             prd_lbl_crt_count += prd_crt_count
             prd_lbl_cer += prd_cer
-        
-            # print(names, prd_crt_count)
-            # for pred_lbl, lbl in zip(pred_labels, labels):
-            #     print(lbl, pred_lbl)
-            
-            # print("----------------------------------------------------")
             prd_cer = round(prd_cer/len(labels), 2)
 
             if self.show_img:
@@ -176,7 +170,7 @@ class EvalPrep():
         return prd_lbl_crt_count/lbl_count, prd_lbl_cer/lbl_count
 
     def eval(self):
-        if self.dataset_name in ('pos', 'wildreceipt'):
+        if self.dataset_name in ('patch_dataset', 'wildreceipt'):
             return self.eval_patch()
         else:
             return self.eval_area()
@@ -191,8 +185,8 @@ if __name__ == "__main__":
                         help='shows each batch of images')
     parser.add_argument('--prep_path', default=properties.prep_model_path,
                         help="specify non-default prep model location")
-    parser.add_argument('--dataset', default='pos',
-                        help="performs training with given dataset [pos, vgg, wildreceipt]")
+    parser.add_argument('--dataset', default='patch_dataset',
+                        help="performs training with given dataset [patch_dataset, vgg, wildreceipt]")
     parser.add_argument('--ocr', default="Tesseract",
                         help="performs training lebels from given OCR [Tesseract,EasyOCR]")
     parser.add_argument("--batch_size", default=64, type=int,  help='Inference batch size')

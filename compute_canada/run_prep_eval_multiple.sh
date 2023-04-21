@@ -2,45 +2,41 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=1  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=2:30:00     # DD-HH:MM:SS
-#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/eval/%j.out
+#SBATCH --time=01:30:00     # DD-HH:MM:SS
+#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/eval/%j.out
 
 
 module load StdEnv/2020 tesseract/4.1.0
-source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
+VENV_PATH="/home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate"
+source $VENV_PATH
+PROJECT_BASE_PATH=" /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR"
 
+# Command-line arguments
+DATASET_NAME=$1
+OCR=$2
 
-echo "Tesseract POS results"
+echo "Dataset=$1 OCR=$2 results"
 
-EXP_ID=259
 DATA_PATH="$SLURM_TMPDIR/data"
+rm -rf "$DATA_PATH"
 
-rm -rf $DATA_PATH
-DATA_PATH="$SLURM_TMPDIR/data"
-DATASET_NAME="patch_dataset"
-# DATASET_NAME="vgg"
-if [ ! -d $DATA_PATH ]
+if [ ! -d "$DATA_PATH" ]
 then
     echo "$DATASET_NAME Dataset extraction started"
     cp "/home/ganesh/projects/def-nilanjan/ganesh/datasets/$DATASET_NAME.zip" $SLURM_TMPDIR/
-    cd $SLURM_TMPDIR
+    cd $SLURM_TMPDIR || { echo "Slurm Tmpdir does not exist. Exiting.."; exit 1; }
     unzip $DATASET_NAME.zip >> /dev/null
     mv $DATASET_NAME data
     echo "$DATASET_NAME Dataset extracted"
 else
     echo "$DATASET_NAME Dataset exists"
 fi
-# cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
-cd  /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
-# [ ! -f "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/Prep_model_4" ] && echo "File not found!" 
-# for i in 38 45 48 49
-# do
-#     echo "Running $i preprocessor"
-#     # python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/" --dataset pos --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
-#     python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$EXP_ID/ckpts/" --dataset vgg --prep_model_name "Prep_model_$i" --data_base_path $SLURM_TMPDIR
-# done
 
+cd $PROJECT_BASE_PATH || { echo "$PROJECT_BASE_PATH does not exist. Exiting.."; exit 1; }
+
+# shellcheck disable=SC2317 
 function run_exp() {
+
 local exp_id="$1"
 echo "Experiment $exp_id"
 shift
@@ -48,70 +44,31 @@ local exps=("$@")
 for i in "${exps[@]}";
 do
     echo "Preprocessor $i"
-    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/Prep_model_$i" --dataset pos --data_base_path $SLURM_TMPDIR --ocr Tesseract
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/Prep_model_$i" --dataset $DATASET_NAME --data_base_path $SLURM_TMPDIR --ocr $OCR
 done
 
 }
 
 
 
-exps=(45_83.58)
-run_exp 450 "${exps[@]}" 
+exps=(43_80.34)
+run_exp 480 "${exps[@]}" 
 
-exps=(44_80.02)
-run_exp 451 "${exps[@]}" # both
+exps=(49_83.82)
+run_exp 481 "${exps[@]}" # both
 
-exps=(47_82.75)
-run_exp 452 "${exps[@]}" # 49
+exps=(42_82.89)
+run_exp 482 "${exps[@]}" # 49
 
-exps=(48_79.60)
-run_exp 453 "${exps[@]}" #  48
+exps=(44_84.22)
+run_exp 483 "${exps[@]}" #  48
 
-exps=(49_84.13)
-run_exp 458 "${exps[@]}" #  47
+# exps=(37_58.17)
+# run_exp 478 "${exps[@]}" #  41
 
-exps=(45_82.63)
-run_exp 459 "${exps[@]}" #  48
-
-# exps=(47)
-# run_exp 376 "${exps[@]}" #  41
-
-# exps=(36)
-# run_exp 375 "${exps[@]}" #  33
+# exps=(33_56.79)
+# run_exp 479 "${exps[@]}" #  33
 
 
-# exps=(45 49)
-# run_exp 304 "${exps[@]}" #  POS 4% + random - 45
-
-# exps=(43 45)
-# run_exp 305 "${exps[@]}" #  POS 4% +  random + tracking - 45
-
-
-# VGG
-
-# exps=(41)
-# run_exp 350 "${exps[@]}" # Highest - 27, later - 47
-
-# exps=(45)
-# run_exp 342 "${exps[@]}" # 48
-
-# exps=(48)
-# run_exp 343 "${exps[@]}" # 45
-
-# exps=(46)
-# run_exp 344 "${exps[@]}" #  48
-
-# exps=(45)
-# run_exp 345 "${exps[@]}" #  46
-
-# exps=(27 31)
-# run_exp 346 "${exps[@]}" #  27 highest
-
-# exps=(36)
-# run_exp 347 "${exps[@]}" #  49
-
-# exps=(43)
-# run_exp 348 "${exps[@]}" #  41
-
-# exps=(40)
-# run_exp 349 "${exps[@]}" #  POS 2.5% + cer
+# exit 0
+# EOT
