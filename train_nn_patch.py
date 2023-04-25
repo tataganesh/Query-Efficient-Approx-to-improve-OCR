@@ -523,8 +523,8 @@ if __name__ == "__main__":
     print("Training Arguments")
     print(args)
 
-    wandb.init(project='ocr-calls-reduction', entity='tataganesh', id="ozhr3c8n", resume=True)
-    wandb.config.update(vars(args), allow_val_change=True)
+    wandb.init(project='ocr-calls-reduction', entity='tataganesh')
+    wandb.config.update(vars(args))
     wandb.run.name = f"{args.exp_name}"
     trainer = TrainNNPrep(args)
 
