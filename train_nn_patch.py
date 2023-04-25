@@ -152,8 +152,12 @@ class TrainNNPrep():
             crnn_parameters, lr=self.lr_crnn, weight_decay=self.weight_decay)
         self.optimizer_prep = optim.Adam(
             self.prep_model.parameters(), lr=self.lr_prep, weight_decay=self.weight_decay)
-
-
+        if args.optim_crnn_path:
+            self.optimizer_crnn.load_state_dict(torch.load(args.optim_crnn_path))
+        if args.optim_prep_path:
+            self.optimizer_prep.load_state_dict(torch.load(args.optim_prep_path))
+            
+            
     def _call_model(self, images, labels):
         """Get output from CRNN model for images. Convert labels to format suitable for CTC Loss. 
 
@@ -425,6 +429,11 @@ class TrainNNPrep():
             torch.save(self.prep_model, prep_ckpt_path)
             torch.save(self.crnn_model,  os.path.join(self.ckpt_base_path, 
                        "CRNN_model_" + str(epoch)))
+            # Save latest optimizers
+            torch.save(self.optimizer_prep.state_dict(), os.path.join(self.ckpt_base_path, 
+                       "optim_prep_latest"))
+            torch.save(self.optimizer_crnn.state_dict(), os.path.join(self.ckpt_base_path, 
+                       "optim_crnn_latest"))
             best_prep_ckpt_path = os.path.join(self.ckpt_base_path, f"Prep_model_best")
             if OCR_accuracy > best_val_acc:
                 best_val_acc = OCR_accuracy
@@ -436,8 +445,6 @@ class TrainNNPrep():
                 summary_metrics["best_val_epoch"] = best_val_epoch
                 wandb.run.summary.update(summary_metrics)
                 
-        # To be removed: Do not report test-set performance
-        # summary_metrics = prep_eval(best_val_ckpt_path, 'pos', self.data_base_path, self.ocr_name)
         print("Training Completed.")
         
 
@@ -506,14 +513,18 @@ if __name__ == "__main__":
     parser.add_argument('--attn_activation', help='Activation function after last layer of self attention module', type=str, default='sigmoid', choices=['sigmoid', 'softmax', 'relu'])
     parser.add_argument('--weightgen_method', help="Method for generating loss weights for tracking", default='decaying', choices=['levenshtein', 'self_attention', 'decaying'])
     parser.add_argument('--decay_factor', help="Decay factor for decaying loss weight generation", type=float, default=0.7)
+    parser.add_argument('--optim_crnn_path', help="Path of saved crnn optimizer")
+    parser.add_argument('--optim_prep_path', help="Path of saved prep optimizer")
+
+
 
 
     args = parser.parse_args()
     print("Training Arguments")
     print(args)
 
-    wandb.init(project='ocr-calls-reduction', entity='tataganesh')
-    wandb.config.update(vars(args))
+    wandb.init(project='ocr-calls-reduction', entity='tataganesh', id="ozhr3c8n", resume=True)
+    wandb.config.update(vars(args), allow_val_change=True)
     wandb.run.name = f"{args.exp_name}"
     trainer = TrainNNPrep(args)
 
