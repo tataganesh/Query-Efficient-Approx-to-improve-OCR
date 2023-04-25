@@ -240,32 +240,31 @@ class TrainNNPrep():
                     print(f"OCR Samples - {img_preds.shape[0]}")
                     epoch_print_flag = False
                     
-                if self.selection_method and self.train_batch_prop < 1:
-                    for i in range(self.inner_limit):
-                        self.prep_model.zero_grad()
-                        if i == 0 and self.inner_limit_skip:
-                            ocr_labels = self.ocr.get_labels(img_preds)
-                            loss_weights = self.loss_wghts_gnrtr.gen_weights(self.tracked_labels, img_preds_names)
-                            add_labels_to_history(self, img_preds_names, ocr_labels)
-                            # Peek at history of OCR labels for each strip and construct weighted CTC loss
-                            target_batches = generate_ctc_target_batches(self, img_preds_names)
-                            scores, pred_size = call_crnn(self, img_preds)
-                            loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
-                            total_bb_calls += len(ocr_labels)
-                            epoch_bb_calls += len(ocr_labels)
-                        else:
-                            noisy_imgs, noise = self.add_noise(img_preds, noiser)
-                            ocr_labels = self.ocr.get_labels(noisy_imgs)
-                            scores, y, pred_size, y_size = self._call_model(
-                                noisy_imgs, ocr_labels)
-                            loss = self.primary_loss_fn(
-                                scores, y, pred_size, y_size)
-                            total_bb_calls += img_preds.shape[0]
-                            epoch_bb_calls += img_preds.shape[0]
+                for i in range(self.inner_limit):
+                    self.prep_model.zero_grad()
+                    if i == 0 and self.inner_limit_skip:
+                        ocr_labels = self.ocr.get_labels(img_preds)
+                        loss_weights = self.loss_wghts_gnrtr.gen_weights(self.tracked_labels, img_preds_names)
+                        add_labels_to_history(self, img_preds_names, ocr_labels)
+                        # Peek at history of OCR labels for each strip and construct weighted CTC loss
+                        target_batches = generate_ctc_target_batches(self, img_preds_names)
+                        scores, pred_size = call_crnn(self, img_preds)
+                        loss = weighted_ctc_loss(self, scores, pred_size, target_batches, loss_weights)
+                        total_bb_calls += len(ocr_labels)
+                        epoch_bb_calls += len(ocr_labels)
+                    else:
+                        noisy_imgs, noise = self.add_noise(img_preds, noiser)
+                        ocr_labels = self.ocr.get_labels(noisy_imgs)
+                        scores, y, pred_size, y_size = self._call_model(
+                            noisy_imgs, ocr_labels)
+                        loss = self.primary_loss_fn(
+                            scores, y, pred_size, y_size)
+                        total_bb_calls += img_preds.shape[0]
+                        epoch_bb_calls += img_preds.shape[0]
 
-                    if self.inner_limit:
-                        temp_loss += loss.item()
-                        loss.backward()
+                if self.inner_limit:
+                    temp_loss += loss.item()
+                    loss.backward()
                 inner_limit = max(1, self.inner_limit)
                 CRNN_training_loss = temp_loss/inner_limit
                 if self.inner_limit:
