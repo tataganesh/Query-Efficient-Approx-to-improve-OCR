@@ -3,6 +3,7 @@ import torch
 import Levenshtein
 import numpy as np
 import sys
+import optuna
 
 sys.path.insert(0, "datasets")
 
@@ -247,3 +248,10 @@ def save_json(metrics, json_path, wandb_obj=None):
         json.dump(metrics, f)
     if wandb_obj is not None:
         wandb_obj.save(json_path)
+
+
+def handle_optuna_trial(trial, accuracy, epoch):
+    if trial is not None:
+        trial.report(accuracy, epoch)
+        if trial.should_prune():
+            raise optuna.TrialPruned()

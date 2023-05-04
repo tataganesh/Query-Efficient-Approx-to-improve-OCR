@@ -20,7 +20,7 @@ from label_tracking import tracking_methods, tracking_utils
 from tracking_utils import generate_ctc_target_batches, call_crnn, weighted_ctc_loss, add_labels_to_history
 from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, random_subset, create_dirs, attention_debug
-from utils import get_text_stack, get_ocr_helper, compare_labels, save_json
+from utils import get_text_stack, get_ocr_helper, compare_labels, save_json, handle_optuna_trial
 from transform_helper import AddGaussianNoice
 import properties as properties
 import numpy as np
@@ -30,7 +30,8 @@ wandb.Table.MAX_ROWS = 100000
 
 class TrainNNPrep():
 
-    def __init__(self, args):
+    def __init__(self, args, optuna_trial=None):
+        self.optuna_trial = optuna_trial
         self.batch_size = 1
         self.random_seed = args.random_seed
         self.lr_crnn = args.lr_crnn
@@ -241,8 +242,7 @@ class TrainNNPrep():
                     for j in range(len(labels)):
                         text_strip_name = f"{j}_{labels[j]}_{folder_name}_{file_name}"
                         text_strip_names.append(text_strip_name)
-                    # check for number of text crops to be greater than 2, otherwise call black-box for all crops, the 
-                    # greater-than-2 condition is ignored if global sampling is performed
+                    
                     if self.selection_method and epoch >= self.warmup_epochs and ("global" not in self.selection_method):  # Remove num_strips > 2 condition
                         num_bb_samples = max(1, math.ceil(num_text_strips*(1 - self.train_batch_prop)))
                         text_crops, labels_gt, bb_sample_indices = self.sampler.query(text_crops_all, labels, num_bb_samples, text_strip_names)
@@ -444,10 +444,10 @@ class TrainNNPrep():
                 summary_metrics["best_val_acc"] = best_val_acc
                 summary_metrics["best_val_epoch"] = best_val_epoch
                 wandb.run.summary.update(summary_metrics)
-                
+            handle_optuna_trial(self.optuna_trial, OCR_accuracy * 100, epoch)
         print("Training Completed.")
-        
-
+        return best_val_acc, best_val_epoch
+                
 
 if __name__ == "__main__":
 
