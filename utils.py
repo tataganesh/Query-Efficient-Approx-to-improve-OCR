@@ -4,7 +4,7 @@ import Levenshtein
 import numpy as np
 import sys
 import optuna
-
+import random as python_random
 sys.path.insert(0, "datasets")
 
 import torchvision.transforms as transforms
@@ -15,8 +15,9 @@ import torchvision.utils as utils
 import ocr_helper.tess_helper as tess_helper
 import ocr_helper.eocr_helper as eocr_helper
 import ocr_helper.gcloud_helper as gcloud_helper
-from pprint import pprint
 import json
+import properties
+import wandb
 
 def get_char_maps(vocabulary=None):
     if vocabulary is None:
@@ -187,71 +188,56 @@ def get_ocr_helper(ocr, is_eval=False):
         return None
 
 
-def random_subset(images, labels, num_samples):
-    """Get
-
-    Args:
-        images (torch.tensor): Input images
-        labels (torch.tensor): Input labels
-        subset (int): Number of random samples.
-
-    Returns:
-        tuple: Return subset of images and labels. Chosen randomly.
-    """
-    num_images = images.shape[0]
-    rand_indices = torch.randperm(num_images)[:num_samples]
-    return images[rand_indices], [labels[i] for i in rand_indices], rand_indices
-
-
-def create_dirs(dirs):
+def create_dirs(self, args):
+    self.crnn_model_path = args.crnn_model
+    self.prep_model_path = args.prep_model
+    self.data_base_path = args.data_base_path
+    self.exp_base_path = args.exp_base_path
+    self.ckpt_base_path = os.path.join(self.exp_base_path, properties.prep_crnn_ckpts)
+    self.cers_base_path = os.path.join(self.exp_base_path, "cers")
+    self.tracked_labels_path = os.path.join(self.exp_base_path, "tracked_labels")
+    self.selectedsamples_path = os.path.join(self.exp_base_path, "selected_samples")
+    self.img_out_path = os.path.join(self.exp_base_path, properties.img_out)
+    dirs = [self.exp_base_path, self.ckpt_base_path,
+            self.img_out_path, self.cers_base_path,
+            self.tracked_labels_path, self.selectedsamples_path]
     for x in dirs:
         if not os.path.exists(x):
             os.mkdir(x)
 
-
-def attention_debug(self, loss_weights, text_crop_names):
-    self.attn_outputs = defaultdict(lambda: [])
-    self.attn_forward_hook1 = (
-        self.attention_model.loss_coef_layer.register_forward_hook(
-            self.get_layer_input("loss_w_layer")
-        )
-    )
-    self.attn_forward_hook2 = self.attention_model.Wq.register_forward_hook(
-        self.get_layer_input("word_embs")
-    )
-    print(f"Loss Weights = {loss_weights}")
-    print("\nHistory")
-    for crop_name in text_crop_names:
-        if crop_name in self.tracked_labels:
-            print(self.tracked_labels[crop_name])
-    print("\nAttention Scores")
-    pprint(self.attn_outputs["loss_w_layer"])
-    print("\nLinear Layer Weights")
-    print(
-        self.attention_model.loss_coef_layer.weight,
-        self.attention_model.loss_coef_layer.bias,
-    )
-    print("\n Word Embeddings")
-    print(self.attn_outputs["word_embs"])
-    self.attn_forward_hook1.remove()
-    self.attn_forward_hook2.remove()
-
-
-def get_layer_input(self, name):
-    def hook(model, input, output):
-        self.attn_outputs[name].append(input[0].detach())
-    return hook
-
-
-def save_json(metrics, json_path, wandb_obj=None):
+def save_json(metrics, json_path, wandb_save=True):
     with open(json_path, "w") as f:
         json.dump(metrics, f)
-    if wandb_obj is not None:
-        wandb_obj.save(json_path)
-
+    if wandb_save:
+        wandb.save(json_path)
+        
+          
+def save_all_jsons(self, epoch):
+    save_json(
+        self.tracked_labels,
+        os.path.join(self.tracked_labels_path, f"tracked_labels_{epoch}.json"),
+        wandb_save=False
+    )
+    save_json(
+        self.tracked_labels,
+        os.path.join(self.tracked_labels_path, f"tracked_labels_current.json")
+    )
+    save_json(
+        self.selected_samples,
+        os.path.join(self.selectedsamples_path, f"selected_samples_current.json")    )
+    save_json(
+        self.sampler.all_cers,
+        os.path.join(self.cers_base_path, f"all_cers.json")
+    )
 
 def handle_optuna_trial(trial, accuracy, epoch):
     if trial is not None:
         trial.report(accuracy, epoch)
         if trial.should_prune():
             raise optuna.TrialPruned()
+  
+       
+def set_random_seeds(random_seed):
+    torch.manual_seed(random_seed)
+    python_random.seed(random_seed)
+    np.random.seed(random_seed)

@@ -24,12 +24,11 @@ import torchvision.transforms as transforms
 from models.model_crnn import CRNN
 from datasets.ocr_dataset import OCRDataset
 from datasets.img_dataset import ImgDataset
-from utils import get_char_maps, get_ocr_helper, random_subset
+from utils import get_char_maps, get_ocr_helper
 from utils import show_img, compare_labels, get_text_stack, get_ocr_helper
 from transform_helper import PadWhite, AddGaussianNoice
 import properties as properties
 
-minibatch_subset_methods = {"random": random_subset}
 
 class TrainCRNN():
 

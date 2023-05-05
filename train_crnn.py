@@ -17,7 +17,6 @@ from datasets.img_dataset import ImgDataset
 from utils import (
     get_char_maps,
     get_ocr_helper,
-    random_subset,
     compare_labels,
     get_char_maps,
     pred_to_string,
