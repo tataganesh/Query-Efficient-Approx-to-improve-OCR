@@ -25,7 +25,6 @@ prep_crnn_ckpts = "ckpts"
 crnn_model_path = "./outputs/crnn_trained_model/model"
 crnn_tensor_board = "./outputs/crnn_runs/"
 prep_model_path = "./outputs/prep_trained_model/"
-prep_tensor_board = "prep_runs_tb_logs"
 img_out = "img_out"
 param_path = "params.txt"
 train_subset_size = 50000

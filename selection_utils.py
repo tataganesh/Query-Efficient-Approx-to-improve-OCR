@@ -98,41 +98,6 @@ class RandomSampler(DataSampler):
         return images[rand_indices], [labels[i] for i in rand_indices], rand_indices
 
 
-class UniformCerSampler(DataSampler):
-    def __init__(self, cers, discount_factor=1):
-        self.cers = cers
-        self.discount_factor = discount_factor
-
-    def query(self, images, labels, num_samples, names):
-        """Get
-
-        Args:
-            images (torch.tensor): Input images
-            labels (torch.tensor): Input labels
-            subset (int): Number of random samples.
-
-        Returns:
-            tuple: Return subset of images and labels. Chosen randomly.
-        """
-        num_images = images.shape[0]
-        half_num_images = int(num_images / 2) + num_images % 2
-        image_cers = list()
-        for name in names:
-            if name in self.cers:
-                image_cers.append(self.cers[name])
-        image_cers = torch.tensor(image_cers)
-        sorted_indices = torch.argsort(image_cers, descending=True)
-        alternating_indices = torch.zeros_like(sorted_indices)
-        even_indices = np.arange(0, sorted_indices.shape[0], 2)
-        odd_indices = np.arange(1, sorted_indices.shape[0], 2)
-        alternating_indices[even_indices] = sorted_indices[:half_num_images]
-        second_half_indices = sorted_indices[half_num_images:]
-        inv_idx = torch.arange(second_half_indices.shape[0] - 1, -1, -1).long()
-        alternating_indices[odd_indices] = second_half_indices[inv_idx]
-        selection_idx = alternating_indices[:num_samples]
-        return images[selection_idx], [labels[i] for i in selection_idx], selection_idx
-
-
 class CerRangeSampler(DataSampler):
     def __init__(self, cers, discount_factor=1):
         self.cers = cers
@@ -254,7 +219,6 @@ class RandomSamplerGlobal(DataSampler):
 
 def datasampler_factory(sampling_method):
     method_mapping = {
-        "uniformCER": UniformCerSampler,
         "random": RandomSampler,
         "topKCER": TopKCERSampler,
         "uniformCERglobal": UniformSamplerGlobal,
