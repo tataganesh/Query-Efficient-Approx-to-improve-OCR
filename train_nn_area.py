@@ -23,7 +23,6 @@ from tracking_utils import call_crnn, weighted_ctc_loss, generate_ctc_target_bat
 import wandb
 import json
 
-wandb.Table.MAX_ROWS = 50000
 import pandas as pd
 import shutil
 

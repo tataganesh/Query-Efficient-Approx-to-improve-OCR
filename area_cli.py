@@ -73,6 +73,9 @@ if __name__ == "__main__":
         default=True,
     )
     parser.add_argument(
+        "--random_seed", help="Random seed for experiment", type=int, default=42
+    )
+    parser.add_argument(
         "--exp_base_path",
         default=".",
         help="Base path for experiment. Defaults to current directory",

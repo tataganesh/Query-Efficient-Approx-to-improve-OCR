@@ -30,8 +30,6 @@ from transform_helper import AddGaussianNoice
 import properties as properties
 import wandb
 
-wandb.Table.MAX_ROWS = 100000
-
 
 class TrainNNPrep:
     def __init__(self, args, optuna_trial=None):
