@@ -2,8 +2,8 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=1  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=01:30:00     # DD-HH:MM:SS
-#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_area_logs/eval/%j.out
+#SBATCH --time=00:30:00     # DD-HH:MM:SS
+#SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/eval/%j.out
 
 
 module load StdEnv/2020 tesseract/4.1.0
@@ -17,7 +17,7 @@ OCR=$2
 
 echo "Dataset=$1 OCR=$2 results"
 
-DATA_PATH="$SLURM_TMPDIR/data"
+DATA_PATH="$SLURM_TMPDIR/$DATASET_NAME"
 rm -rf "$DATA_PATH"
 
 if [ ! -d "$DATA_PATH" ]
@@ -26,7 +26,6 @@ then
     cp "/home/ganesh/projects/def-nilanjan/ganesh/datasets/$DATASET_NAME.zip" $SLURM_TMPDIR/
     cd $SLURM_TMPDIR || { echo "Slurm Tmpdir does not exist. Exiting.."; exit 1; }
     unzip $DATASET_NAME.zip >> /dev/null
-    mv $DATASET_NAME data
     echo "$DATASET_NAME Dataset extracted"
 else
     echo "$DATASET_NAME Dataset exists"
@@ -44,24 +43,24 @@ local exps=("$@")
 for i in "${exps[@]}";
 do
     echo "Preprocessor $i"
-    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/Prep_model_$i" --dataset $DATASET_NAME --data_base_path $SLURM_TMPDIR --ocr $OCR
+    python -u eval_prep.py --prep_path "/home/ganesh/scratch/experiment_$exp_id/ckpts/Prep_model_$i" --dataset $DATASET_NAME --data_base_path $DATA_PATH --ocr $OCR
 done
 
 }
 
 
 
-exps=(43_80.34)
-run_exp 480 "${exps[@]}" 
+# exps=(45_67.99)
+# run_exp 500 "${exps[@]}" 
 
-exps=(49_83.82)
-run_exp 481 "${exps[@]}" # both
+# exps=(45_67.48)
+# run_exp 501 "${exps[@]}" # both
 
-exps=(42_82.89)
-run_exp 482 "${exps[@]}" # 49
+exps=(45_67.50)
+run_exp 502 "${exps[@]}" # 49
 
-exps=(44_84.22)
-run_exp 483 "${exps[@]}" #  48
+# exps=(40_64.46)
+# run_exp 503 "${exps[@]}" #  48
 
 # exps=(37_58.17)
 # run_exp 478 "${exps[@]}" #  41

@@ -15,8 +15,9 @@ DB_NAME="prep_train_easyocr"
 
 module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
-DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="patch_dataset"
+DATA_PATH="$SLURM_TMPDIR/$DATASET_NAME"
+
 wandb disabled
 export WANDB_SILENT=True
 if [ ! -d $DATA_PATH ]
@@ -26,7 +27,6 @@ then
 	cd $SLURM_TMPDIR
 	unzip $DATASET_NAME.zip >> /dev/null
 	echo "$DATASET_NAME unzipped"
-	mv $DATASET_NAME data
 else
 	echo "$DATASET_NAME exists"
 fi
@@ -41,5 +41,5 @@ echo "Running Hyperparameter study $OPTUNA_STUDY_NAME. Saving in DB $DB_NAME"
 OPTUNA_DB=/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/hyperparam_sweeps/optuna_studies/$DB_NAME.db
 
 # Launch your script, giving it as arguments the database file and the study name
-python3 -u patch_sweep.py --optuna_db $OPTUNA_DB --optuna_study_name $OPTUNA_STUDY_NAME
+python3 -u patch_sweep.py --optuna_db $OPTUNA_DB --optuna_study_name $OPTUNA_STUDY_NAME --data_base_path $DATA_PATH
  

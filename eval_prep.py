@@ -10,6 +10,7 @@ from utils import show_img, compare_labels, get_text_stack, get_ocr_helper
 from transform_helper import PadWhite
 import properties as properties
 from tqdm import tqdm
+from pprint import pprint
 
 
 class EvalPrep():
@@ -117,10 +118,12 @@ class EvalPrep():
         lbl_count = 0
         counter = 0
 
-        for i, (image, labels_dict, names) in enumerate(self.dataset):
+        for i, (image, labels_dict, name) in enumerate(self.dataset):
             text_crops, labels = get_text_stack(
                 image.detach(), labels_dict, self.input_size)     
             lbl_count += len(labels)
+            print(f"Image - {name}")
+
             if self.show_orig:
                 ocr_labels = self.ocr.get_labels(text_crops)
                 if self.dataset_name == 'wildreceipt':
@@ -131,6 +134,7 @@ class EvalPrep():
                 ori_lbl_crt_count += ori_crt_count
                 ori_lbl_cer += ori_cer
                 ori_cer = round(ori_cer/len(labels), 2)
+                
 
 
             image = image.unsqueeze(0)
@@ -148,6 +152,9 @@ class EvalPrep():
             prd_lbl_crt_count += prd_crt_count
             prd_lbl_cer += prd_cer
             prd_cer = round(prd_cer/len(labels), 2)
+            print(f"Original: {ori_crt_count}, Preprocessed: {prd_crt_count}")
+            pprint(list(zip(ocr_labels, pred_labels, labels)))
+            
 
             if self.show_img:
                 show_img(image.cpu())

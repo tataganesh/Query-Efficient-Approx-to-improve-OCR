@@ -28,8 +28,8 @@ source "$VENV_PATH"
 PROJECT_HOME="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR"
 
 cd $PROJECT_HOME
-DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="textarea_dataset"
+DATA_PATH="$SLURM_TMPDIR/$DATASET_NAME"
 DATASET_PATH="/home/ganesh/projects/def-nilanjan/ganesh/datasets/$DATASET_NAME.zip"
 echo "Dataset Path - $DATASET_PATH"
 if [ ! -d $DATA_PATH ]
@@ -41,7 +41,6 @@ then
 	# unzip $DATASET_NAME.zip -d $DATASET_NAME >> /dev/null
 
 	echo "$DATASET_NAME unzipped"
-	mv $DATASET_NAME data
 else
 	echo "Dataset exists"
 fi
@@ -55,7 +54,7 @@ CRNN_MODEL_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/crnn_warmup/crnn_model
 mkdir -p $CRNN_MODEL_PATH
 # tensorboard --logdir=$TB_LOGS_PATH --host 0.0.0.0 &
 echo "Running training script"
-python -u train_crnn.py --batch_size $BATCH_SIZE --epoch $EPOCH --crnn_model_path $CRNN_MODEL_PATH --dataset pos --data_base_path $SLURM_TMPDIR --ocr $OCR # --lr 5e-05 # --ckpt_path $CKPT_PATH  --train_subset 100 --val_subset 100
+python -u train_crnn.py --batch_size $BATCH_SIZE --epoch $EPOCH --crnn_model_path $CRNN_MODEL_PATH --dataset pos --data_base_path $DATA_PATH --ocr $OCR # --lr 5e-05 # --ckpt_path $CKPT_PATH  --train_subset 100 --val_subset 100
 #--minibatch_subset random 
 # --ckpt_path $CKPT_PATH --start_epoch 6
 date +%c

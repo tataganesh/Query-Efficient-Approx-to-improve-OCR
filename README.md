@@ -25,7 +25,7 @@ python -u train_nn_patch.py --epoch $EPOCH --data_base_path $DATA_PATH --crnn_mo
 ```
 Relevant arguments are explained here
 
-* `data_base_path`: Path to folder with dataset in "data" folder. 
+* `data_base_path`: Path to folder containing train, val and test sets. 
 * `crnn_model`: Path to pre-trained CRNN model
 * `exp_base_path`: Path for saving model checkpoints
 * `minibatch_subset`: Used to specify different selection algorithms. (Random=random, TopKCER=TopKCER, UniformCER=rangeCER)

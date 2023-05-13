@@ -39,7 +39,7 @@ params = {
     "cers_ocr_path": "/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/pos_dataset_cers.json",
     "exp_base_path": None,
     "warmup_epochs": 0,
-    "data_base_path": os.environ.get("SLURM_TMPDIR", "base"),
+    "data_base_path": None,
     "attn_activation": "sigmoid",
     "discount_factor": 1,
     "optim_crnn_path": None,
@@ -54,6 +54,7 @@ params = {
 
 
 def objective(trial, params, args):
+    params["data_base_path"] = args.data_base_path
     trial.set_user_attr("CCID", params["data_base_path"].split(".")[-2])
     params["exp_base_path"] = pathlib.Path(f"/home/ganesh/scratch/hyp_sweeps/{args.optuna_study_name}/experiment_{trial.number}/")
     os.makedirs(params["exp_base_path"], exist_ok=True)
@@ -74,6 +75,8 @@ if __name__ == "__main__":
     # args.optuna_db and args.optuna_study_name are command line arguments
     parser.add_argument("--optuna_db", help="Database for storing study")
     parser.add_argument("--optuna_study_name", help="Name of study")
+    parser.add_argument("--data_base_path", help="Base path of data")
+
     args = parser.parse_args()
     print(args)
 
