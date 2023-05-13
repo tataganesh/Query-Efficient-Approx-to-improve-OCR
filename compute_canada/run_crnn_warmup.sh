@@ -29,7 +29,7 @@ PROJECT_HOME="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-impro
 
 cd $PROJECT_HOME
 DATASET_NAME="textarea_dataset"
-DATA_PATH="$SLURM_TMPDIR/DATASET_NAME"
+DATA_PATH="$SLURM_TMPDIR/$DATASET_NAME"
 DATASET_PATH="/home/ganesh/projects/def-nilanjan/ganesh/datasets/$DATASET_NAME.zip"
 echo "Dataset Path - $DATASET_PATH"
 if [ ! -d $DATA_PATH ]
