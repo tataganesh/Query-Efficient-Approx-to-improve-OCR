@@ -15,8 +15,8 @@ DB_NAME="crnn_train"
 
 module load StdEnv/2020 tesseract/4.1.0
 source /home/ganesh/projects/def-nilanjan/ganesh/ocr_bb_calls/bin/activate
-DATA_PATH="$SLURM_TMPDIR/data"
 DATASET_NAME="gcp_textareas"
+DATA_PATH="$SLURM_TMPDIR/$DATASET_NAME"
 wandb disable
 if [ ! -d $DATA_PATH ]
 then
@@ -26,10 +26,9 @@ then
 	unzip $DATASET_NAME.zip >> /dev/null
 	# unzip $DATASET_NAME.zip -d $DATASET_NAME >> /dev/null
 
-	echo "Dataset unzipped"
-	mv $DATASET_NAME data
+	echo "$DATASET_NAME unzipped"
 else
-	echo "Dataset exists"
+	echo "$DATASET_NAME exists"
 fi
 
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/hyperparam_sweeps
@@ -42,5 +41,5 @@ echo "Running Hyperparameter study $OPTUNA_STUDY_NAME. Saving in DB $DB_NAME"
 OPTUNA_DB=/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR/hyperparam_sweeps/optuna_studies/$DB_NAME.db
 
 # Launch your script, giving it as arguments the database file and the study name
-python3 -u crnn_sweep.py --optuna_db $OPTUNA_DB --optuna_study_name $OPTUNA_STUDY_NAME
+python3 -u crnn_sweep.py --optuna_db $OPTUNA_DB --optuna_study_name $OPTUNA_STUDY_NAME --data_base_path $DATA_PATH
  

@@ -9,17 +9,13 @@ import os
 from argparse import Namespace
 import pathlib
 
-
-# python -u train_crnn.py --batch_size $BATCH_SIZE --epoch $EPOCH --crnn_model_path $CRNN_MODEL_PATH --dataset pos  --data_base_path $SLURM_TMPDIR  --lr 0.01 # --train_subset 100 --val_subset 100
-
-
 params = {
     "batch_size": 64,
     "epoch": 60,
     "std": 5,
     "dataset": "pos",
     "ocr": None,
-    "data_base_path": os.environ.get("SLURM_TMPDIR", "base"),
+    "data_base_path": None,
     "train_subset": None,
     "val_subset": None,
     "dataset": "pos",
@@ -33,6 +29,7 @@ EXP_BASE_PATH = "/home/ganesh/scratch/hyp_sweeps/"
 
 
 def objective(trial, params, args):
+    params["data_base_path"] = args.data_base_path
     trial.set_user_attr("CCID", params["data_base_path"].split(".")[-2])
     crnn_path = pathlib.Path(f"/home/ganesh/scratch/hyp_sweeps/{args.optuna_study_name}/experiment_{trial.number}/crnn_warmup/crnn_model")
     os.makedirs(str(crnn_path.parent), exist_ok=True)
@@ -53,6 +50,7 @@ if __name__ == "__main__":
     # args.optuna_db and args.optuna_study_name are command line arguments
     parser.add_argument("--optuna_db", help="Database for storing study")
     parser.add_argument("--optuna_study_name", help="Name of study")
+    parser.add_argument("--data_base_path", help="Base path of data")
     args = parser.parse_args()
     print(args)
     

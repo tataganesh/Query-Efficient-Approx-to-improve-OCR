@@ -1,23 +1,23 @@
 # POS Text areas
-pos_text_dataset_train = "data/textarea_dataset_train"
-pos_text_dataset_test = "data/textarea_dataset_test"
-pos_text_dataset_dev = "data/textarea_dataset_dev"
+pos_text_dataset_train = "textarea_dataset_train"
+pos_text_dataset_test = "textarea_dataset_test"
+pos_text_dataset_dev = "textarea_dataset_dev"
 
 # VGG
-vgg_text_dataset_train = "data/vgg_train"
-vgg_text_dataset_test = "data/vgg_test"
-vgg_text_dataset_dev = "data/vgg_dev"
+vgg_text_dataset_train = "vgg_train"
+vgg_text_dataset_test = "vgg_test"
+vgg_text_dataset_dev = "vgg_dev"
 
 # POS Patches
-patch_dataset_train = "data/patch_dataset_train"
-patch_dataset_test = "data/patch_dataset_test"
-patch_dataset_dev = "data/patch_dataset_dev"
+patch_dataset_train = "patch_dataset_train"
+patch_dataset_test = "patch_dataset_test"
+patch_dataset_dev = "patch_dataset_dev"
 
 
 # WildReceipt Patches
-wr_dataset_train = "data/wildreceipt_train"
-wr_dataset_test = "data/wildreceipt_test"
-wr_dataset_dev = "data/wildreceipt_dev"
+wr_dataset_train = "wildreceipt_train"
+wr_dataset_test = "wildreceipt_test"
+wr_dataset_dev = "wildreceipt_dev"
 
 
 

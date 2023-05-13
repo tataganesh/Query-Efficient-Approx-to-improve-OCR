@@ -21,14 +21,15 @@ wandb login $WANDB_API_KEY
 OCR="EasyOCR"
 
 cd /home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR
-DATA_PATH="$SLURM_TMPDIR/data"
+
+DATASET_NAME="vgg"
+DATA_PATH="$SLURM_TMPDIR/$DATASET_NAME"
 if [ ! -d $DATA_PATH ]
 then
     echo "VGG Dataset extraction started"
     cp /home/ganesh/projects/def-nilanjan/ganesh/datasets/vgg.zip $SLURM_TMPDIR/
     cd $SLURM_TMPDIR
-    unzip vgg.zip >> /dev/null
-    mv vgg data
+    unzip $DATASET_NAME.zip >> /dev/null
     echo "VGG Dataset extracted"
 else
     echo "VGG Dataset exists"
