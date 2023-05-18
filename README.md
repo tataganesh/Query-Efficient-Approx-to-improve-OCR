@@ -2,6 +2,8 @@
 
 The repository contains code for training and evaluating the experiments performed in the submission titled "Document Image Cleaning using Budget-Aware Black-Box Approximation". A large part of the code is derived from [Gradient-Approx-to-improve-OCR](https://github.com/paarandika/Gradient-Approx-to-improve-OCR).
 
+**Hugging Face Spaces Demo**:    [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/tomofi/EasyOCR)
+
 ## Setup
 Create a python virtual environment and install the required packages using
 ```bash
@@ -61,10 +63,6 @@ The directory `pretrained_models` contains trained preprocessors and pretrained 
 ### Pending Items
 
  - [ ] Trained Models
- - [ ] Add colab link
- - [ ] Hugging Face spaces demo
- - [ ] Remove "Train, Val and Test splits should be extracted and placed in a folder called 'data'".
- - [ ] Budget Calculation Explanation
- - [ ] Some results
+ - [ ] Add colab link 
 
 
