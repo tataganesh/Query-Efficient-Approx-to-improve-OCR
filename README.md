@@ -2,7 +2,7 @@
 
 The repository contains code for training and evaluating the experiments performed in the submission titled "Document Image Cleaning using Budget-Aware Black-Box Approximation". A large part of the code is derived from [Gradient-Approx-to-improve-OCR](https://github.com/paarandika/Gradient-Approx-to-improve-OCR).
 
-**Hugging Face Spaces Demo**:    [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/tomofi/EasyOCR)
+**Hugging Face Spaces Demo**:    [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/gtata/low-budget-document-cleaning)
 
 ## Setup
 Create a python virtual environment and install the required packages using
