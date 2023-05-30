@@ -20,7 +20,7 @@ wr_dataset_test = "wildreceipt_test"
 wr_dataset_dev = "wildreceipt_dev"
 
 
-
+cer_artifacts_path = "cer_artifacts"
 prep_crnn_ckpts = "ckpts"
 crnn_model_path = "./outputs/crnn_trained_model/model"
 crnn_tensor_board = "./outputs/crnn_runs/"

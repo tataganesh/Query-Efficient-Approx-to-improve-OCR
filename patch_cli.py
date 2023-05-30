@@ -4,6 +4,7 @@ import wandb
 import datetime
 from train_nn_patch import TrainNNPrep
 import os
+import json
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trains the Prep with Patch dataset")
@@ -151,12 +152,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--optim_crnn_path", help="Path of saved crnn optimizer")
     parser.add_argument("--optim_prep_path", help="Path of saved prep optimizer")
+    parser.add_argument("--pruning_artifact", help="Name of Artifact/json file used for document image pruning")
 
     args = parser.parse_args()
     print("Training Arguments")
     print(args)
+    
+    with open("wandb_config.json") as fp:
+        wandb_config = json.load(fp)
 
-    wandb.init(project="ocr-calls-reduction", entity="tataganesh")
+    wandb.init(**wandb_config)
     wandb.config.update(vars(args), allow_val_change=True)
     wandb.run.name = f"{args.exp_name}"
     trainer = TrainNNPrep(args)

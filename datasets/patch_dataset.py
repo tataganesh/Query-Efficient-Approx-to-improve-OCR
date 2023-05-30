@@ -17,9 +17,6 @@ class PatchDataset(Dataset):
         self.pad = pad
         self.include_name = include_name
         self.files = get_files(data_dir, ['png', 'jpg', 'jpeg'])
-        if num_subset:
-            random.seed(42)  # Allows reproducibility of train/val subsets
-            self.files = random.sample(self.files, num_subset)
         self.size = (400, 512)
         self.resize_images = resize_images
 

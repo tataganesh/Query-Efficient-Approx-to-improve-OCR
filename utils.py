@@ -224,7 +224,7 @@ def save_all_jsons(self, epoch):
     )
     save_json(
         self.selected_samples,
-        os.path.join(self.selectedsamples_path, f"selected_samples_current.json")    )
+        os.path.join(self.selectedsamples_path, f"selected_samples_current.json")),
     save_json(
         self.sampler.all_cers,
         os.path.join(self.cers_base_path, f"all_cers.json")
@@ -241,3 +241,23 @@ def set_random_seeds(random_seed):
     torch.manual_seed(random_seed)
     python_random.seed(random_seed)
     np.random.seed(random_seed)
+
+      
+def get_pruning_sampler(dataset, artifact_name):
+    if not isinstance(wandb.run.mode, wandb.sdk.lib.disabled.RunDisabled):
+        # Artifact code
+        data = wandb.run.use_artifact(f"{artifact_name}:latest")
+        data_dir = data.download()
+        cers_path = os.path.join(data_dir, f"{artifact_name}.json")
+    else:
+        # Read from disk
+        cers_path = os.path.join("pruning", properties.cer_artifacts_path, f"{artifact_name}.json")
+    pruned_data_info = json.load(open(cers_path, 'r'))
+    indices = list()
+    for i, (_, _, name) in enumerate(dataset):
+        folder_name, file_name = name.split("/")[-2:]
+        file_name = file_name.split(".")[0]
+        if f"{folder_name}_{file_name}" in pruned_data_info:
+            indices.append(i)
+    subset_sampler = torch.utils.data.SubsetRandomSampler(torch.tensor(indices))
+    return subset_sampler
