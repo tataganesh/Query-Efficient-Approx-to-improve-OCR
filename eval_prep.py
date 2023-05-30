@@ -12,7 +12,6 @@ import properties as properties
 from tqdm import tqdm
 from pprint import pprint
 
-
 class EvalPrep():
 
     def __init__(self, args):
@@ -122,7 +121,7 @@ class EvalPrep():
             text_crops, labels = get_text_stack(
                 image.detach(), labels_dict, self.input_size)     
             lbl_count += len(labels)
-            print(f"Image - {name}")
+            # print(f"Image - {name}")
 
             if self.show_orig:
                 ocr_labels = self.ocr.get_labels(text_crops)
@@ -152,9 +151,8 @@ class EvalPrep():
             prd_lbl_crt_count += prd_crt_count
             prd_lbl_cer += prd_cer
             prd_cer = round(prd_cer/len(labels), 2)
-            print(f"Original: {ori_crt_count}, Preprocessed: {prd_crt_count}")
-            pprint(list(zip(ocr_labels, pred_labels, labels)))
-            
+            # print(f"Original: {ori_crt_count}, Preprocessed: {prd_crt_count}")
+            # pprint(list(zip(ocr_labels, pred_labels, labels)))
 
             if self.show_img:
                 show_img(image.cpu())

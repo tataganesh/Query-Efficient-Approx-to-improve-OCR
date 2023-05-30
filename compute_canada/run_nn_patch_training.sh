@@ -11,8 +11,8 @@ echo "Running Experiment $EXP_NUM"
 # module load gcc/9.3.0 opencv
 module load StdEnv/2020 tesseract/4.1.0
 
-# OCR="Tesseract"
-OCR="EasyOCR"
+OCR="Tesseract"
+# OCR="EasyOCR"
 #OCR="gvision"
 
 PROJECT_HOME="/home/ganesh/projects/def-nilanjan/ganesh/Gradient-Approx-to-improve-OCR"
@@ -62,4 +62,6 @@ echo "Running training script"
 # PREP_OPTIMIZER_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts/optim_prep_latest"
 # CRNN_OPTIMIZER_PATH="/home/ganesh/scratch/experiment_$EXP_NUM/ckpts/optim_crnn_latest"
 
-python3 -u patch_cli.py --epoch $EPOCH --data_base_path $DATA_PATH --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_8_random_bp498 --exp_id $EXP_NUM  --minibatch_subset random --minibatch_subset_prop 0.87 --inner_limit 1  --cers_ocr_path $CER_JSON_PATH --ocr $OCR --prep_model $PREP_MODEL_PATH --optim_crnn_path $CRNN_OPTIMIZER_PATH --optim_prep_path $PREP_OPTIMIZER_PATH --start_epoch 45 --lr_crnn 0.000015 --lr_prep 0.0005 --ocr $OCR
+ python3 -u patch_cli.py --epoch $EPOCH --data_base_path $DATA_PATH --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_100_prune10 --exp_id $EXP_NUM --inner_limit 1  --cers_ocr_path $CER_JSON_PATH --ocr $OCR --pruning_artifact cers_pos_topk_10
+
+# python3 -u patch_cli.py --epoch $EPOCH --data_base_path $DATA_PATH --crnn_model  $CRNN_MODEL_PATH --exp_base_path $EXP_BASE_PATH --exp_name patch_8_random_bp498 --exp_id $EXP_NUM  --minibatch_subset random --minibatch_subset_prop 0.87 --inner_limit 1  --cers_ocr_path $CER_JSON_PATH --ocr $OCR --prep_model $PREP_MODEL_PATH --optim_crnn_path $CRNN_OPTIMIZER_PATH --optim_prep_path $PREP_OPTIMIZER_PATH --start_epoch 45 --lr_crnn 0.000015 --lr_prep 0.0005 --ocr $OCR

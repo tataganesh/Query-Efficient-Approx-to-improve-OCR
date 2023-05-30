@@ -2,7 +2,7 @@
 #SBATCH --gres=gpu:v100l:1       # Request GPU "generic resources"
 #SBATCH --cpus-per-task=1  # Refer to cluster's documentation for the right CPU/GPU ratio
 #SBATCH --mem=8000       # Memory proportional to GPUs: 32000 Cedar, 47000 B�luga, 64000 Graham.
-#SBATCH --time=00:30:00     # DD-HH:MM:SS
+#SBATCH --time=00:15:00     # DD-HH:MM:SS
 #SBATCH --output=/home/ganesh/projects/def-nilanjan/ganesh/nn_patch_logs/eval/%j.out
 
 
@@ -50,17 +50,20 @@ done
 
 
 
-# exps=(45_67.99)
-# run_exp 500 "${exps[@]}" 
+exps=(45_81.54)
+run_exp 510 "${exps[@]}" 
 
-# exps=(45_67.48)
-# run_exp 501 "${exps[@]}" # both
+exps=(47_81.13)
+run_exp 511 "${exps[@]}" # both
 
-exps=(45_67.50)
-run_exp 502 "${exps[@]}" # 49
+# exps=(33_83.79)
+# run_exp 507 "${exps[@]}" # 49
 
-# exps=(40_64.46)
-# run_exp 503 "${exps[@]}" #  48
+# exps=(38_80.41)
+# run_exp 508 "${exps[@]}" #  48
+
+# exps=(39_79.41)
+# run_exp 509 "${exps[@]}" #  48
 
 # exps=(37_58.17)
 # run_exp 478 "${exps[@]}" #  41

@@ -24,7 +24,7 @@ from datasets.patch_dataset import PatchDataset
 from utils import get_char_maps, set_bn_eval, pred_to_string, create_dirs
 from utils import (
     get_text_stack, get_ocr_helper, compare_labels,
-    save_all_jsons, handle_optuna_trial, set_random_seeds
+    save_all_jsons, handle_optuna_trial, set_random_seeds, get_pruning_sampler
 )
 from transform_helper import AddGaussianNoice
 import properties as properties
@@ -106,21 +106,30 @@ class TrainNNPrep:
         self.dataset = PatchDataset(
             self.train_set,
             pad=True,
-            include_name=True,
-            num_subset=self.train_subset_size,
+            include_name=True
         )
         self.validation_set = PatchDataset(
             self.validation_set, pad=True, num_subset=self.val_subset_size
         )
+        if not self.train_subset_size:
+            self.train_subset_size = len(self.train_set)
+        if not self.val_subset_size:
+            self.val_subset_size = len(self.validation_set)
+            
+        if args.pruning_artifact:
+            train_sampler = get_pruning_sampler(self.dataset, args.pruning_artifact)
+        else:
+            train_rand_indices = torch.randperm(len(self.train_set))[: self.train_subset_size]
+            train_sampler = torch.utils.data.SubsetRandomSampler(train_rand_indices)
+        print(f"Train Data Size - {len(self.dataset)}, Train Subset Size - {len(train_sampler)}")
         self.loader_train = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.batch_size,
-            shuffle=True,
             drop_last=True,
             collate_fn=PatchDataset.collate,
+            sampler=train_sampler
         )
-
-        self.train_set_size = int(len(self.dataset))
+        self.train_set_size = len(train_sampler)
         self.val_set_size = len(self.validation_set)
 
         if self.cers:
@@ -144,7 +153,7 @@ class TrainNNPrep:
         if args.optim_crnn_path:
             self.optimizer_crnn.load_state_dict(torch.load(args.optim_crnn_path))
         if args.optim_prep_path:
-            self.optimizer_prep.load_state_dict(torch.load(args.optim_prep_path))
+            self.optimizer_prep.load_state_dict(torch.load(args.optim_prep_path))      
 
     def _call_model(self, images, labels):
         """Get output from CRNN model for images. Convert labels to format suitable for CTC Loss.
