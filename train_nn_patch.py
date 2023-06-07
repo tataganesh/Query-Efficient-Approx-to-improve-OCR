@@ -112,14 +112,14 @@ class TrainNNPrep:
             self.validation_set, pad=True, num_subset=self.val_subset_size
         )
         if not self.train_subset_size:
-            self.train_subset_size = len(self.train_set)
+            self.train_subset_size = len(self.dataset)
         if not self.val_subset_size:
             self.val_subset_size = len(self.validation_set)
             
         if args.pruning_artifact:
             train_sampler = get_pruning_sampler(self.dataset, args.pruning_artifact)
         else:
-            train_rand_indices = torch.randperm(len(self.train_set))[: self.train_subset_size]
+            train_rand_indices = torch.randperm(len(self.dataset))[: self.train_subset_size]
             train_sampler = torch.utils.data.SubsetRandomSampler(train_rand_indices)
         print(f"Train Data Size - {len(self.dataset)}, Train Subset Size - {len(train_sampler)}")
         self.loader_train = torch.utils.data.DataLoader(
